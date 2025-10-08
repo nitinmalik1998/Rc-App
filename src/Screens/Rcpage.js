@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useState, useEffect} from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
   ActionSheetIOS,
   Platform,
   PermissionsAndroid,
+  ActivityIndicator,
 } from 'react-native';
 import {RadioButton} from 'react-native-paper';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -20,14 +21,21 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const Rcpage = ({navigation}) => {
+const Rcpage = ({navigation, route}) => {
   const insets = useSafeAreaInsets();
+  const [userId, setUserId] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [rcIssued, setRcIssued] = useState('yes');
   const [noPlateIssued, setNoPlateIssued] = useState('yes');
   const [tractorOwner, setTractorOwner] = useState('yes');
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [existingFormId, setExistingFormId] = useState(null);
+  const [existingFormNo, setExistingFormNo] = useState(null);
   
   const [formData, setFormData] = useState({
     employeeName: '',
@@ -65,6 +73,73 @@ const Rcpage = ({navigation}) => {
     "5075 2WD",
     "5075 4WD"
   ];
+
+  // Get user ID from AsyncStorage on component mount
+  useEffect(() => {
+    const getUserData = async () => {
+      try {
+        const storedUserId = await AsyncStorage.getItem('userId');
+        if (storedUserId) {
+          setUserId(storedUserId);
+          console.log('User ID loaded:', storedUserId);
+        }
+        
+        // Check if we're in edit mode (receiving existing form data)
+        if (route.params?.formData) {
+          const editData = route.params.formData;
+          setIsEditMode(true);
+          setExistingFormId(editData.id);
+          setExistingFormNo(editData.form_no); // Keep the original form number
+          
+          // Pre-populate form data
+          setFormData({
+            employeeName: editData.employee_name || '',
+            customerName: editData.customer_name || '',
+            percentage: editData.percentage || '',
+            address: editData.address || '',
+            mobileNo: editData.mobile_no || '',
+            registrationNo: editData.registration_no || '',
+            tractorModel: editData.tractor_model || '',
+            date: editData.select_date ? new Date(editData.select_date) : null,
+            hypothecation: editData.hypothecation || '',
+            chassisNo: editData.chassis_no || '',
+            engineNo: editData.engine_no || '',
+          });
+
+          // Set radio button states
+          setRcIssued(editData.rc_issued?.toLowerCase() === 'no' ? 'no' : 'yes');
+          setNoPlateIssued(editData.plate_issued?.toLowerCase() === 'no' ? 'no' : 'yes');
+          setTractorOwner(editData.tractor_owner?.toLowerCase() === 'no' ? 'no' : 'yes');
+
+          // Load existing images if available
+          if (editData.customer_photo) {
+            setCustomerPhoto({uri: editData.customer_photo});
+          }
+          if (editData.customer_signature) {
+            setCustomerSignature({uri: editData.customer_signature});
+          }
+          if (editData.manager_signature) {
+            setManagerSignature({uri: editData.manager_signature});
+          }
+
+          console.log('Edit mode activated for form ID:', editData.id, 'Form No:', editData.form_no);
+        }
+      } catch (error) {
+        console.log('Error loading user data:', error);
+      }
+    };
+
+    getUserData();
+  }, [route.params]);
+
+  // Generate form number - only for new forms
+  const generateFormNo = () => {
+    if (isEditMode && existingFormNo) {
+      return existingFormNo; // Use existing form number for updates
+    }
+    const timestamp = new Date().getTime();
+    return `RC${timestamp}`;
+  };
 
   // Camera permissions
   const requestCameraPermission = async () => {
@@ -123,18 +198,40 @@ const Rcpage = ({navigation}) => {
 
   const handleCamera = (setImageFunction) => {
     launchCamera(
-      { mediaType: 'photo', quality: 1, cameraType: 'back', saveToPhotos: true },
+      { 
+        mediaType: 'photo', 
+        quality: 0.8, 
+        cameraType: 'back', 
+        saveToPhotos: true,
+        includeBase64: false 
+      },
       (response) => {
         if (response.didCancel) return;
-        if (response.assets && response.assets.length > 0) setImageFunction(response.assets[0]);
+        if (response.error) {
+          Alert.alert('Error', 'Failed to capture image');
+          return;
+        }
+        if (response.assets && response.assets.length > 0) {
+          setImageFunction(response.assets[0]);
+        }
       }
     );
   };
 
   const handleImageLibrary = (setImageFunction) => {
-    launchImageLibrary({ mediaType: 'photo', quality: 1 }, (response) => {
+    launchImageLibrary({ 
+      mediaType: 'photo', 
+      quality: 0.8,
+      includeBase64: false 
+    }, (response) => {
       if (response.didCancel) return;
-      if (response.assets && response.assets.length > 0) setImageFunction(response.assets[0]);
+      if (response.error) {
+        Alert.alert('Error', 'Failed to select image');
+        return;
+      }
+      if (response.assets && response.assets.length > 0) {
+        setImageFunction(response.assets[0]);
+      }
     });
   };
 
@@ -157,13 +254,241 @@ const Rcpage = ({navigation}) => {
     }
   };
 
-  const handleSubmit = () => {
-    Alert.alert('Success', 'Form submitted successfully!');
+  const validateForm = () => {
+    const requiredFields = [
+      'employeeName', 'customerName', 'percentage', 'address', 
+      'mobileNo', 'registrationNo', 'tractorModel', 'hypothecation',
+      'chassisNo', 'engineNo'
+    ];
+
+    for (const field of requiredFields) {
+      if (!formData[field] || formData[field].toString().trim() === '') {
+        Alert.alert('Validation Error', `Please fill in ${field.replace(/([A-Z])/g, ' $1').toLowerCase()}`);
+        return false;
+      }
+    }
+
+    // Make images optional for updates, required for new forms
+    if (!isEditMode) {
+      if (!customerPhoto) {
+        Alert.alert('Validation Error', 'Please add customer photo');
+        return false;
+      }
+
+      if (!customerSignature) {
+        Alert.alert('Validation Error', 'Please add customer signature');
+        return false;
+      }
+
+      if (!managerSignature) {
+        Alert.alert('Validation Error', 'Please add manager signature');
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const prepareFormData = () => {
+    const formDataToSend = new FormData();
+
+    // For updates, use PUT method and include ID
+    if (isEditMode && existingFormId) {
+      formDataToSend.append('id', existingFormId.toString());
+      formDataToSend.append('form_no', existingFormNo); // Use existing form number
+      
+      console.log('UPDATE MODE - Form ID:', existingFormId, 'Form No:', existingFormNo);
+    } else {
+      // For new forms, generate new form number
+      formDataToSend.append('form_no', generateFormNo());
+      console.log('CREATE MODE - New Form No:', generateFormNo());
+    }
+
+    // Common form data for both create and update
+    formDataToSend.append('user_id', userId);
+    formDataToSend.append('form_date', new Date().toISOString().split('T')[0]);
+    formDataToSend.append('employee_name', formData.employeeName);
+    formDataToSend.append('customer_name', formData.customerName);
+    formDataToSend.append('percentage', formData.percentage);
+    formDataToSend.append('address', formData.address);
+    formDataToSend.append('mobile_no', formData.mobileNo);
+    formDataToSend.append('registration_no', formData.registrationNo);
+    formDataToSend.append('tractor_model', formData.tractorModel);
+    formDataToSend.append('select_date', formData.date ? formData.date.toISOString().split('T')[0] : '');
+    formDataToSend.append('hypothecation', formData.hypothecation);
+    formDataToSend.append('chassis_no', formData.chassisNo);
+    formDataToSend.append('engine_no', formData.engineNo);
+    formDataToSend.append('rc_issued', rcIssued === 'yes' ? 'Yes' : 'No');
+    formDataToSend.append('plate_issued', noPlateIssued === 'yes' ? 'Yes' : 'No');
+    formDataToSend.append('tractor_owner', tractorOwner === 'yes' ? 'Yes' : 'No');
+
+    // Add images only if they are newly selected
+    if (customerPhoto && customerPhoto.uri && !customerPhoto.uri.startsWith('http')) {
+      formDataToSend.append('customer_photo', {
+        uri: customerPhoto.uri,
+        type: customerPhoto.type || 'image/jpeg',
+        name: `customer_photo_${Date.now()}.jpg`,
+      });
+    }
+
+    if (customerSignature && customerSignature.uri && !customerSignature.uri.startsWith('http')) {
+      formDataToSend.append('customer_signature', {
+        uri: customerSignature.uri,
+        type: customerSignature.type || 'image/jpeg',
+        name: `customer_signature_${Date.now()}.jpg`,
+      });
+    }
+
+    if (managerSignature && managerSignature.uri && !managerSignature.uri.startsWith('http')) {
+      formDataToSend.append('manager_signature', {
+        uri: managerSignature.uri,
+        type: managerSignature.type || 'image/jpeg',
+        name: `manager_signature_${Date.now()}.jpg`,
+      });
+    }
+
+    return formDataToSend;
+  };
+
+  const handleSubmit = async () => {
+    if (!userId) {
+      Alert.alert('Error', 'User ID not found. Please login again.');
+      return;
+    }
+
+    if (!validateForm()) {
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const formDataToSend = prepareFormData();
+      
+      // Use different endpoints and methods for create vs update
+      let url, method;
+      
+      if (isEditMode && existingFormId) {
+        // For update, use PUT method
+        url = `https://argosmob.uk/makroo/public/api/v1/rc-no-plate-delivery/form/update`;
+        method = 'put';
+        console.log('UPDATE REQUEST - URL:', url, 'Method:', method, 'Form ID:', existingFormId);
+      } else {
+        // For create, use POST method
+        url = 'https://argosmob.uk/makroo/public/api/v1/rc-no-plate-delivery/form/save';
+        method = 'post';
+        console.log('CREATE REQUEST - URL:', url, 'Method:', method);
+      }
+
+      const config = {
+        method: method,
+        url: url,
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        data: formDataToSend,
+        timeout: 30000, // 30 seconds timeout
+      };
+
+      console.log('Sending form data...');
+      const response = await axios(config);
+      console.log('API Response:', response.data);
+
+      // Enhanced success detection with clear conditions
+      let isSuccess = false;
+      let successMessage = '';
+      let errorMessage = '';
+
+      if (isEditMode) {
+        // For UPDATE operations
+        successMessage = 'Form updated successfully!';
+        errorMessage = 'Failed to update form. Please try again.';
+        
+        if (response.data) {
+          if (response.data.status === true || response.data.success === true) {
+            isSuccess = true;
+          } else if (response.data.message && response.data.message.toLowerCase().includes('success')) {
+            isSuccess = true;
+          } else if (response.data.message && response.data.message.toLowerCase().includes('updated')) {
+            isSuccess = true;
+          }
+        }
+      } else {
+        // For NEW SUBMISSION operations
+        successMessage = 'Form submitted successfully!';
+        errorMessage = 'Failed to submit form. Please try again.';
+        
+        if (response.data) {
+          if (response.data.status === true || response.data.success === true) {
+            isSuccess = true;
+          } else if (response.data.message && response.data.message.toLowerCase().includes('success')) {
+            isSuccess = true;
+          } else if (response.data.message && response.data.message.toLowerCase().includes('created')) {
+            isSuccess = true;
+          } else if (response.data.message && response.data.message.toLowerCase().includes('saved')) {
+            isSuccess = true;
+          }
+        }
+      }
+
+      // Additional success checks based on HTTP status
+      if (response.status === 200 || response.status === 201) {
+        if (!isSuccess) {
+          // If HTTP status is success but our detection failed, still consider it success
+          isSuccess = true;
+          console.log('Success detected from HTTP status');
+        }
+      }
+
+      if (isSuccess) {
+        Alert.alert(
+          'Success', 
+          successMessage,
+          [
+            {
+              text: 'OK',
+              // onPress: () => {
+              //   // Navigate back after successful operation
+              //   if (navigation.canGoBack()) {
+              //     navigation.goBack();
+              //   }
+              // }
+            }
+          ]
+        );
+      } else {
+        const serverErrorMessage = response.data?.message || response.data?.error || errorMessage;
+        Alert.alert(
+          isEditMode ? 'Update Failed' : 'Submission Failed', 
+          serverErrorMessage
+        );
+      }
+
+    } catch (error) {
+      console.log('Submission Error:', error);
+      console.log('Error details:', error.response?.data);
+      
+      let errorMessage = 'Something went wrong. Please try again.';
+      
+      if (error.response) {
+        const serverError = error.response.data;
+        errorMessage = serverError.message || serverError.error || `Server error: ${error.response.status}`;
+      } else if (error.request) {
+        errorMessage = 'Network error. Please check your internet connection.';
+      }
+      
+      Alert.alert(
+        isEditMode ? 'Update Failed' : 'Submission Failed', 
+        errorMessage
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleHome = () => {
     navigation.navigate('Dashboard');
-  }
+  };
 
   const handleGeneratePDF = () => {
     Alert.alert('PDF', 'PDF Challan generated!');
@@ -206,8 +531,13 @@ const Rcpage = ({navigation}) => {
 
       <ScrollView style={styles.container}>
         {/* Date and Form No */}
-        <Text style={styles.Date}>09-08-25</Text>
-        <Text style={styles.formNo}>Form No: RC001</Text>
+        <Text style={styles.Date}>{new Date().toLocaleDateString()}</Text>
+        <Text style={styles.formNo}>Form No: {generateFormNo()}</Text>
+        {isEditMode && (
+          <View style={styles.editModeContainer}>
+            <Text style={styles.editModeText}>Edit Mode - Updating Form ID: {existingFormId}</Text>
+          </View>
+        )}
 
         {/* Form Fields */}
         <View style={styles.formContainer}>
@@ -223,6 +553,7 @@ const Rcpage = ({navigation}) => {
                   value={formData.employeeName}
                   onChangeText={text => handleInputChange('employeeName', text)}
                   placeholder="Employee name"
+                  editable={!loading}
                 />
               </LinearGradient>
             </View>
@@ -238,6 +569,7 @@ const Rcpage = ({navigation}) => {
                   value={formData.customerName}
                   onChangeText={text => handleInputChange('customerName', text)}
                   placeholder="Customer name"
+                  editable={!loading}
                 />
               </LinearGradient>
             </View>
@@ -256,6 +588,7 @@ const Rcpage = ({navigation}) => {
                   onChangeText={text => handleInputChange('percentage', text)}
                   placeholder="Percentage"
                   keyboardType="numeric"
+                  editable={!loading}
                 />
               </LinearGradient>
             </View>
@@ -271,6 +604,7 @@ const Rcpage = ({navigation}) => {
                   value={formData.address}
                   onChangeText={text => handleInputChange('address', text)}
                   placeholder="Address"
+                  editable={!loading}
                 />
               </LinearGradient>
             </View>
@@ -289,6 +623,7 @@ const Rcpage = ({navigation}) => {
                   onChangeText={text => handleInputChange('mobileNo', text)}
                   placeholder="Mobile No."
                   keyboardType="phone-pad"
+                  editable={!loading}
                 />
               </LinearGradient>
             </View>
@@ -306,6 +641,7 @@ const Rcpage = ({navigation}) => {
                     handleInputChange('registrationNo', text)
                   }
                   placeholder="Registration No."
+                  editable={!loading}
                 />
               </LinearGradient>
             </View>
@@ -321,6 +657,7 @@ const Rcpage = ({navigation}) => {
                 <TouchableOpacity 
                   style={styles.input}
                   onPress={() => setShowModelDropdown(true)}
+                  disabled={loading}
                 >
                   <Text style={
                     formData.tractorModel ? 
@@ -349,6 +686,7 @@ const Rcpage = ({navigation}) => {
                   <TouchableOpacity
                     style={[styles.input, styles.inputWithIconField]}
                     onPress={handleDateIconPress}
+                    disabled={loading}
                   >
                     <Text style={
                       formData.date ? 
@@ -360,7 +698,9 @@ const Rcpage = ({navigation}) => {
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={handleDateIconPress}
-                    style={styles.iconButton}>
+                    style={styles.iconButton}
+                    disabled={loading}
+                  >
                     <Icon name="calendar-today" size={20} color="#666" />
                   </TouchableOpacity>
                 </View>
@@ -390,6 +730,7 @@ const Rcpage = ({navigation}) => {
                     handleInputChange('hypothecation', text)
                   }
                   placeholder="Select Hypothecation"
+                  editable={!loading}
                 />
               </LinearGradient>
             </View>
@@ -406,10 +747,13 @@ const Rcpage = ({navigation}) => {
                     value={formData.chassisNo}
                     onChangeText={text => handleInputChange('chassisNo', text)}
                     placeholder="Chassis No."
+                    editable={!loading}
                   />
                   <TouchableOpacity
                     onPress={handleChassisScanPress}
-                    style={styles.iconButton}>
+                    style={styles.iconButton}
+                    disabled={loading}
+                  >
                     <Icon name="qr-code-scanner" size={20} color="#666" />
                   </TouchableOpacity>
                 </View>
@@ -430,10 +774,13 @@ const Rcpage = ({navigation}) => {
                     value={formData.engineNo}
                     onChangeText={text => handleInputChange('engineNo', text)}
                     placeholder="Engine No."
+                    editable={!loading}
                   />
                   <TouchableOpacity
                     onPress={handleEngineScanPress}
-                    style={styles.iconButton}>
+                    style={styles.iconButton}
+                    disabled={loading}
+                  >
                     <Icon name="qr-code-scanner" size={20} color="#666" />
                   </TouchableOpacity>
                 </View>
@@ -483,7 +830,9 @@ const Rcpage = ({navigation}) => {
                   styles.radioOptionWrapper,
                   rcIssued === 'yes' && styles.radioOptionSelected,
                 ]}
-                onPress={() => setRcIssued('yes')}>
+                onPress={() => setRcIssued('yes')}
+                disabled={loading}
+              >
                 <LinearGradient
                   colors={['#7E5EA9', '#20AEBC']}
                   start={{x: 0, y: 0}}
@@ -510,7 +859,9 @@ const Rcpage = ({navigation}) => {
                   styles.radioOptionWrapper,
                   rcIssued === 'no' && styles.radioOptionSelected,
                 ]}
-                onPress={() => setRcIssued('no')}>
+                onPress={() => setRcIssued('no')}
+                disabled={loading}
+              >
                 <LinearGradient
                   colors={['#7E5EA9', '#20AEBC']}
                   start={{x: 0, y: 0}}
@@ -543,7 +894,9 @@ const Rcpage = ({navigation}) => {
                   styles.radioOptionWrapper,
                   noPlateIssued === 'yes' && styles.radioOptionSelected,
                 ]}
-                onPress={() => setNoPlateIssued('yes')}>
+                onPress={() => setNoPlateIssued('yes')}
+                disabled={loading}
+              >
                 <LinearGradient
                   colors={['#7E5EA9', '#20AEBC']}
                   start={{x: 0, y: 0}}
@@ -572,7 +925,9 @@ const Rcpage = ({navigation}) => {
                   styles.radioOptionWrapper,
                   noPlateIssued === 'no' && styles.radioOptionSelected,
                 ]}
-                onPress={() => setNoPlateIssued('no')}>
+                onPress={() => setNoPlateIssued('no')}
+                disabled={loading}
+              >
                 <LinearGradient
                   colors={['#7E5EA9', '#20AEBC']}
                   start={{x: 0, y: 0}}
@@ -606,7 +961,9 @@ const Rcpage = ({navigation}) => {
                   styles.radioOptionWrapper,
                   tractorOwner === 'yes' && styles.radioOptionSelected,
                 ]}
-                onPress={() => setTractorOwner('yes')}>
+                onPress={() => setTractorOwner('yes')}
+                disabled={loading}
+              >
                 <LinearGradient
                   colors={['#7E5EA9', '#20AEBC']}
                   start={{x: 0, y: 0}}
@@ -634,7 +991,9 @@ const Rcpage = ({navigation}) => {
                   styles.radioOptionWrapper,
                   tractorOwner === 'no' && styles.radioOptionSelected,
                 ]}
-                onPress={() => setTractorOwner('no')}>
+                onPress={() => setTractorOwner('no')}
+                disabled={loading}
+              >
                 <LinearGradient
                   colors={['#7E5EA9', '#20AEBC']}
                   start={{x: 0, y: 0}}
@@ -664,6 +1023,7 @@ const Rcpage = ({navigation}) => {
           <TouchableOpacity 
             style={styles.photoSignatureBox} 
             onPress={() => showImagePickerOptions(setCustomerPhoto)}
+            disabled={loading}
           >
             {customerPhoto ? (
               <Image 
@@ -675,6 +1035,7 @@ const Rcpage = ({navigation}) => {
               <>
                 <Icon name="photo-camera" size={35} color="#666" />
                 <Text style={styles.photoSignatureText}>Customer Photo</Text>
+                {isEditMode && <Text style={styles.optionalText}>(Optional for update)</Text>}
               </>
             )}
           </TouchableOpacity>
@@ -682,6 +1043,7 @@ const Rcpage = ({navigation}) => {
           <TouchableOpacity 
             style={styles.photoSignatureBox1} 
             onPress={() => showImagePickerOptions(setCustomerSignature)}
+            disabled={loading}
           >
             {customerSignature ? (
               <Image 
@@ -690,13 +1052,17 @@ const Rcpage = ({navigation}) => {
                 resizeMode="contain"
               />
             ) : (
-              <Text style={styles.photoSignatureText}>Customer Signature</Text>
+              <>
+                <Text style={styles.photoSignatureText}>Customer Signature</Text>
+                {isEditMode && <Text style={styles.optionalText}>(Optional for update)</Text>}
+              </>
             )}
           </TouchableOpacity>
 
           <TouchableOpacity 
             style={styles.photoSignatureBox1} 
             onPress={() => showImagePickerOptions(setManagerSignature)}
+            disabled={loading}
           >
             {managerSignature ? (
               <Image 
@@ -705,24 +1071,45 @@ const Rcpage = ({navigation}) => {
                 resizeMode="contain"
               />
             ) : (
-              <Text style={styles.photoSignatureText}>Manager Signature</Text>
+              <>
+                <Text style={styles.photoSignatureText}>Manager Signature</Text>
+                {isEditMode && <Text style={styles.optionalText}>(Optional for update)</Text>}
+              </>
             )}
           </TouchableOpacity>
         </View>
 
         {/* Buttons */}
         <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
-            <Text style={styles.submitButtonText}>Submit</Text>
+          <TouchableOpacity 
+            style={[styles.submitButton, loading && styles.disabledButton]} 
+            onPress={handleSubmit}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.submitButtonText}>
+                {isEditMode ? 'Update Form' : 'Submit Form'}
+              </Text>
+            )}
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.homeButton} onPress={handleHome}>
+          <TouchableOpacity 
+            style={[styles.homeButton, loading && styles.disabledButton]} 
+            onPress={handleHome}
+            disabled={loading}
+          >
             <Text style={styles.homeButtonText}>Home</Text>
           </TouchableOpacity>
         </View>
 
         {/* PDF Challan Button */}
-        <TouchableOpacity style={styles.pdfButton} onPress={() => navigation.navigate('Pdfpage')}>
+        <TouchableOpacity 
+          style={[styles.pdfButton, loading && styles.disabledButton]} 
+          onPress={() => navigation.navigate('Pdfpage')}
+          disabled={loading}
+        >
           <Text style={styles.pdfButtonText}>Generate PDF Challan</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -757,6 +1144,18 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_28pt-Regular',
     color: '#00000099',
     paddingRight: 15,
+  },
+  editModeContainer: {
+    backgroundColor: '#f0e6ff',
+    padding: 8,
+    borderRadius: 5,
+    marginVertical: 5,
+    alignItems: 'center',
+  },
+  editModeText: {
+    fontSize: 12,
+    fontFamily: 'Inter_28pt-SemiBold',
+    color: '#7E5EA9',
   },
   formContainer: {
     marginBottom: 15,
@@ -932,6 +1331,12 @@ const styles = StyleSheet.create({
     color: '#00000099',
     fontFamily: 'Inter_28pt-Medium',
   },
+  optionalText: {
+    fontSize: 10,
+    color: '#666',
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
   previewImage: {
     width: '100%',
     height: '100%',
@@ -977,6 +1382,9 @@ const styles = StyleSheet.create({
     color: '#fff',
      fontFamily: 'Inter_28pt-SemiBold',
     fontSize: 14,
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
 });
 

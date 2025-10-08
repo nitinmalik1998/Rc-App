@@ -26,6 +26,9 @@ import ModelDetail from '../Screens/StockManagement/ModelDetail';
 import DepotModelList from '../Screens/StockManagement/DepotModelList';
 import ReportModelList from '../Screens/StockManagement/ReportModelList';
 import FinanceModelList from '../Screens/StockManagement/FinanceModelList';
+import Signup from '../Screens/Signup';
+import Forgetpassword from '../Screens/Forgetpassword';
+import Profile from '../Screens/Profile';
 
 
 
@@ -171,6 +174,21 @@ function RootNavigation() {
          <Stack.Screen
           name="FinanceModelList"
           component={FinanceModelList}
+          options={{headerShown: false}}
+        />
+          <Stack.Screen
+          name="Signup"
+          component={Signup}
+          options={{headerShown: false}}
+        />
+        <Stack.Screen
+          name="Forgetpassword"
+          component={Forgetpassword}
+          options={{headerShown: false}}
+        />
+         <Stack.Screen
+          name="Profile"
+          component={Profile}
           options={{headerShown: false}}
         />
       </Stack.Navigator>

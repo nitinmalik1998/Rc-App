@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useState, useEffect} from 'react';
 import {
   View,
   Text,
@@ -13,16 +13,24 @@ import {
   ActionSheetIOS,
   Platform,
   PermissionsAndroid,
+  ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const DeliveryChallan = ({navigation}) => {
+const DeliveryChallan = ({navigation, route}) => {
   const insets = useSafeAreaInsets();
-   const [acceptTerms, setAcceptTerms] = useState(false);
+  
+  const [userId, setUserId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [existingFormId, setExistingFormId] = useState(null);
+  const [acceptTerms, setAcceptTerms] = useState(false);
 
   const [showTractorModelDropdown, setShowTractorModelDropdown] = useState(false);
   const [showTiresMakeDropdown, setShowTiresMakeDropdown] = useState(false);
@@ -101,6 +109,100 @@ const DeliveryChallan = ({navigation}) => {
   ];
   const challanCreators = ['John Doe', 'Jane Smith', 'Mike Johnson', 'Sarah Wilson'];
 
+  // Get user ID from AsyncStorage on component mount
+  useEffect(() => {
+    const getUserData = async () => {
+      try {
+        const storedUserId = await AsyncStorage.getItem('userId');
+        if (storedUserId) {
+          setUserId(storedUserId);
+          console.log('User ID loaded:', storedUserId);
+        }
+        
+        // Check if we're in edit mode (receiving existing form data)
+        if (route.params?.formData) {
+          const editData = route.params.formData;
+          setIsEditMode(true);
+          setExistingFormId(editData.id);
+          
+          // Pre-populate form data
+          setFormData({
+            formNo: editData.form_no || '',
+            date: editData.select_date ? new Date(editData.select_date) : null,
+            deliveryMode: editData.delivery_mode || 'Customer',
+            challanCreatedBy: editData.challan_created_by || '',
+            customerName: editData.customer_name || '',
+            parentage: editData.parentage || '',
+            address: editData.address || '',
+            hypothecation: editData.hypothecation || '',
+            mobileNo: editData.mobile_no || '',
+            areYouCustomer: editData.is_customer?.toString() || '',
+            tractorName: editData.tractor_name || '',
+            tractorModel: editData.tractor_model || '',
+            chassisNo: editData.chassis_no || '',
+            engineNo: editData.engine_no || '',
+            yearOfManufacture: editData.year_of_manufacture || '',
+            tiresMake: editData.tyres_make || '',
+            fipMake: editData.fip_make || '',
+            batteryMake: editData.battery_make || '',
+            dealPrice: editData.deal_price || '',
+            amountPaid: editData.amount_paid || '',
+            totalPaid: editData.total_paid || '',
+            balanceAmount: editData.balance_amount || '',
+            paymentStatus: editData.payment_status || '',
+            financerName: editData.financier_name || '',
+          });
+
+          // Set accessories from JSON string if available
+          if (editData.accessories) {
+            try {
+              const accessoriesData = typeof editData.accessories === 'string' 
+                ? JSON.parse(editData.accessories) 
+                : editData.accessories;
+              
+              // Convert accessories data to boolean values
+              const updatedAccessories = {...accessories};
+              Object.keys(accessoriesData).forEach(key => {
+                if (accessoriesData[key] === 'Yes' || accessoriesData[key] === true) {
+                  const accessoryKey = key.toLowerCase().replace(/\s+/g, '');
+                  if (updatedAccessories.hasOwnProperty(accessoryKey)) {
+                    updatedAccessories[accessoryKey] = true;
+                  }
+                }
+              });
+              setAccessories(updatedAccessories);
+            } catch (error) {
+              console.log('Error parsing accessories:', error);
+            }
+          }
+
+          // Set terms acceptance
+          setAcceptTerms(true);
+        }
+      } catch (error) {
+        console.log('Error loading user data:', error);
+      }
+    };
+
+    getUserData();
+  }, [route.params]);
+
+  // Generate form number
+  const generateFormNo = () => {
+    const timestamp = new Date().getTime();
+    return `DC${timestamp}`;
+  };
+
+  // Calculate balance amount automatically
+  useEffect(() => {
+    if (formData.dealPrice && formData.totalPaid) {
+      const dealPrice = parseFloat(formData.dealPrice) || 0;
+      const totalPaid = parseFloat(formData.totalPaid) || 0;
+      const balance = dealPrice - totalPaid;
+      handleInputChange('balanceAmount', balance.toString());
+    }
+  }, [formData.dealPrice, formData.totalPaid]);
+
   // Camera permissions
   const requestCameraPermission = async () => {
     if (Platform.OS === 'android') {
@@ -158,18 +260,40 @@ const DeliveryChallan = ({navigation}) => {
 
   const handleCamera = (setImageFunction) => {
     launchCamera(
-      { mediaType: 'photo', quality: 1, cameraType: 'back', saveToPhotos: true },
+      { 
+        mediaType: 'photo', 
+        quality: 0.8, 
+        cameraType: 'back', 
+        saveToPhotos: true,
+        includeBase64: false 
+      },
       (response) => {
         if (response.didCancel) return;
-        if (response.assets && response.assets.length > 0) setImageFunction(response.assets[0]);
+        if (response.error) {
+          Alert.alert('Error', 'Failed to capture image');
+          return;
+        }
+        if (response.assets && response.assets.length > 0) {
+          setImageFunction(response.assets[0]);
+        }
       }
     );
   };
 
   const handleImageLibrary = (setImageFunction) => {
-    launchImageLibrary({ mediaType: 'photo', quality: 1 }, (response) => {
+    launchImageLibrary({ 
+      mediaType: 'photo', 
+      quality: 0.8,
+      includeBase64: false 
+    }, (response) => {
       if (response.didCancel) return;
-      if (response.assets && response.assets.length > 0) setImageFunction(response.assets[0]);
+      if (response.error) {
+        Alert.alert('Error', 'Failed to select image');
+        return;
+      }
+      if (response.assets && response.assets.length > 0) {
+        setImageFunction(response.assets[0]);
+      }
     });
   };
 
@@ -185,7 +309,7 @@ const DeliveryChallan = ({navigation}) => {
   };
 
   const handleAreYouCustomerSelect = (value) => {
-    handleInputChange('areYouCustomer', value);
+    handleInputChange('areYouCustomer', value === 'Yes' ? '1' : '0');
   };
 
   const handleAccessoryToggle = (accessory) => {
@@ -245,8 +369,259 @@ const DeliveryChallan = ({navigation}) => {
     Alert.alert('Scan', `QR Scanner for ${field}`);
   };
 
-  const handleSubmit = () => {
-    Alert.alert('Success', 'Delivery Challan submitted successfully!');
+  const validateForm = () => {
+    const requiredFields = [
+      'customerName', 'parentage', 'address', 
+      'mobileNo', 'tractorName', 'tractorModel', 'chassisNo', 
+      'engineNo', 'yearOfManufacture', 'dealPrice', 'paymentStatus'
+    ];
+
+    for (const field of requiredFields) {
+      if (!formData[field] || formData[field].toString().trim() === '') {
+        Alert.alert('Validation Error', `Please fill in ${field.replace(/([A-Z])/g, ' $1').toLowerCase()}`);
+        return false;
+      }
+    }
+
+    if (!formData.areYouCustomer) {
+      Alert.alert('Validation Error', 'Please select if you are the customer');
+      return false;
+    }
+
+    if (!customerSignature) {
+      Alert.alert('Validation Error', 'Please add customer signature');
+      return false;
+    }
+
+    if (!managerSignature) {
+      Alert.alert('Validation Error', 'Please add manager signature');
+      return false;
+    }
+
+    if (!driverSignature) {
+      Alert.alert('Validation Error', 'Please add driver signature');
+      return false;
+    }
+
+    if (!acceptTerms) {
+      Alert.alert('Validation Error', 'Please accept the terms and conditions');
+      return false;
+    }
+
+    return true;
+  };
+
+  const prepareAccessoriesData = () => {
+    const accessoriesData = {};
+    
+    // Map our state keys to the expected API keys
+    const accessoryMapping = {
+      bumper: 'Bumper',
+      cultivator: 'Cultivator',
+      leveler: 'Leveler',
+      rallyFenderSeats: 'Rally Fender Seats',
+      weightsRear: 'Weights Rear',
+      waterTanker: 'Water Tanker',
+      trolly: 'Trolly',
+      weightFront: 'Weight Front',
+      rearTowingHook: 'Rear Towing Hook',
+      hood: 'Hood',
+      ptoPully: 'PTO Pully',
+      drawbar: 'Drawbar',
+      cageWheels: 'Cage Wheels',
+      tool: 'Tool',
+      toplink: 'Top Link'
+    };
+
+    Object.keys(accessories).forEach(key => {
+      if (accessoryMapping[key]) {
+        accessoriesData[accessoryMapping[key]] = accessories[key] ? 'Yes' : 'No';
+      }
+    });
+    
+    // Add empty Other array as shown in API example
+    accessoriesData.Other = [];
+    
+    return JSON.stringify(accessoriesData);
+  };
+
+  const prepareFormData = () => {
+    const formDataToSend = new FormData();
+
+    // Add form data with exact field names as expected by API
+    formDataToSend.append('user_id', userId);
+    formDataToSend.append('form_no', formData.formNo || generateFormNo());
+    formDataToSend.append('select_date', formData.date ? formData.date.toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+    formDataToSend.append('delivery_mode', formData.deliveryMode === 'Customer' ? 'Self Pickup' : 'Branch');
+    formDataToSend.append('challan_created_by', formData.challanCreatedBy || 'Admin');
+    formDataToSend.append('customer_name', formData.customerName);
+    formDataToSend.append('parentage', formData.parentage);
+    formDataToSend.append('address', formData.address);
+    formDataToSend.append('hypothecation', formData.hypothecation || '');
+    formDataToSend.append('mobile_no', formData.mobileNo);
+    formDataToSend.append('is_customer', formData.areYouCustomer);
+    formDataToSend.append('tractor_name', formData.tractorName);
+    formDataToSend.append('tractor_model', formData.tractorModel);
+    formDataToSend.append('chassis_no', formData.chassisNo);
+    formDataToSend.append('engine_no', formData.engineNo);
+    formDataToSend.append('year_of_manufacture', formData.yearOfManufacture);
+    formDataToSend.append('tyres_make', formData.tiresMake || '');
+    formDataToSend.append('fip_make', formData.fipMake || '');
+    formDataToSend.append('battery_make', formData.batteryMake || '');
+    formDataToSend.append('deal_price', formData.dealPrice);
+    formDataToSend.append('amount_paid', formData.amountPaid || '0');
+    formDataToSend.append('total_paid', formData.totalPaid || '0');
+    formDataToSend.append('balance_amount', formData.balanceAmount || '0');
+    formDataToSend.append('payment_status', formData.paymentStatus);
+    formDataToSend.append('financier_name', formData.financerName || '');
+    formDataToSend.append('accessories', prepareAccessoriesData());
+
+    // Add images with proper file names
+    if (customerSignature) {
+      formDataToSend.append('customer_signature', {
+        uri: customerSignature.uri,
+        type: customerSignature.type || 'image/jpeg',
+        name: `customer_signature_${Date.now()}.jpg`,
+      });
+    } else {
+      // Add empty file field if no image selected
+      formDataToSend.append('customer_signature', '');
+    }
+
+    if (managerSignature) {
+      formDataToSend.append('manager_signature', {
+        uri: managerSignature.uri,
+        type: managerSignature.type || 'image/jpeg',
+        name: `manager_signature_${Date.now()}.jpg`,
+      });
+    } else {
+      formDataToSend.append('manager_signature', '');
+    }
+
+    if (driverSignature) {
+      formDataToSend.append('driver_signature', {
+        uri: driverSignature.uri,
+        type: driverSignature.type || 'image/jpeg',
+        name: `driver_signature_${Date.now()}.jpg`,
+      });
+    } else {
+      formDataToSend.append('driver_signature', '');
+    }
+
+    // For update, add the form ID
+    if (isEditMode && existingFormId) {
+      formDataToSend.append('id', existingFormId);
+    }
+
+    // Log form data for debugging
+    console.log('Form Data being sent:');
+    formDataToSend._parts.forEach(([key, value]) => {
+      if (typeof value !== 'object') {
+        console.log(`${key}: ${value}`);
+      } else {
+        console.log(`${key}: [File]`);
+      }
+    });
+
+    return formDataToSend;
+  };
+
+  const handleSubmit = async () => {
+    if (!userId) {
+      Alert.alert('Error', 'User ID not found. Please login again.');
+      return;
+    }
+
+    if (!validateForm()) {
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const formDataToSend = prepareFormData();
+      
+      const url = isEditMode 
+        ? 'https://argosmob.uk/makroo/public/api/v1/delivery-challan/form/update'
+        : 'https://argosmob.uk/makroo/public/api/v1/delivery-challan/form/save';
+
+      console.log('Making API call to:', url);
+
+      const response = await axios.post(url, formDataToSend, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'Accept': 'application/json',
+        },
+        timeout: 30000,
+      });
+
+      console.log('API Response:', response.data);
+
+      // FIXED: Proper success condition check
+      if (response.data && (response.data.success === true || response.data.status === 'success' || response.data.message?.toLowerCase().includes('success'))) {
+        Alert.alert(
+          'Success', 
+          isEditMode ? 'Delivery Challan updated successfully!' : 'Delivery Challan submitted successfully!',
+          [
+            {
+              text: 'OK',
+              // onPress: () => navigation.navigate('Dashboard')
+            }
+          ]
+        );
+      } else {
+        // Extract error message from response
+        let errorMessage = 'Submission failed';
+        
+        if (response.data && response.data.message) {
+          errorMessage = response.data.message;
+        } else if (response.data && response.data.error) {
+          errorMessage = response.data.error;
+        } else if (response.data && response.data.errors) {
+          // Handle validation errors
+          const validationErrors = Object.values(response.data.errors).flat();
+          errorMessage = validationErrors.join(', ');
+        } else if (response.data) {
+          // If we have data but no clear success indicator, check the response structure
+          errorMessage = 'Submission completed but no success confirmation received';
+          console.log('Unclear response structure:', response.data);
+        }
+        
+        Alert.alert('Submission Failed', errorMessage);
+      }
+    } catch (error) {
+      console.log('Submission Error:', error);
+      console.log('Error Response:', error.response?.data);
+      
+      if (error.response) {
+        // Server responded with error status
+        let errorMessage = 'Submission failed. Please try again.';
+        
+        if (error.response.status === 422) {
+          // Handle validation errors
+          if (error.response.data.errors) {
+            const validationErrors = Object.values(error.response.data.errors).flat();
+            errorMessage = `Validation Error: ${validationErrors.join(', ')}`;
+          } else if (error.response.data.message) {
+            errorMessage = error.response.data.message;
+          }
+        } else if (error.response.data?.message) {
+          errorMessage = error.response.data.message;
+        } else if (error.response.data?.error) {
+          errorMessage = error.response.data.error;
+        }
+        
+        Alert.alert('Submission Failed', errorMessage);
+      } else if (error.request) {
+        // Network error
+        Alert.alert('Network Error', 'Please check your internet connection and try again.');
+      } else {
+        // Other errors
+        Alert.alert('Error', 'Something went wrong. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleHome = () => {
@@ -265,7 +640,6 @@ const DeliveryChallan = ({navigation}) => {
     <TouchableOpacity
       style={styles.dropdownItem}
       onPress={() => {
-        // Handle selection based on which dropdown is open
         if (showTractorModelDropdown) handleTractorModelSelect(item);
         else if (showTiresMakeDropdown) handleTiresMakeSelect(item);
         else if (showFipMakeDropdown) handleFipMakeSelect(item);
@@ -283,17 +657,17 @@ const DeliveryChallan = ({navigation}) => {
       {/* Header */}
       <LinearGradient
         colors={['#7E5EA9', '#20AEBC']}
-          start={{ x: 0, y: 0 }}
+        start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 0 }}
         style={styles.header}>
         <Text style={styles.headerTitle}>Delivery Challan</Text>
+        {isEditMode && <Text style={styles.editModeText}>Edit Mode</Text>}
       </LinearGradient>
 
       <ScrollView style={styles.scrollView}>
         {/* Form No */}
         <Text style={styles.sectionHeading}>Create Delivery Challan</Text>
         <View style={styles.formNoContainer}>
-          
           <View style={styles.formNoInputContainer}>
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
@@ -306,6 +680,7 @@ const DeliveryChallan = ({navigation}) => {
                 onChangeText={(text) => handleInputChange('formNo', text)}
                 placeholder="Form No"
                 placeholderTextColor="#666"
+                editable={!loading}
               />
             </LinearGradient>
           </View>
@@ -313,7 +688,6 @@ const DeliveryChallan = ({navigation}) => {
 
   {/* Date */}
          <View style={styles.inputContainer}>
-          
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                start={{ x: 0, y: 0 }}
@@ -323,6 +697,7 @@ const DeliveryChallan = ({navigation}) => {
                 <TouchableOpacity
                   style={[styles.textInput, {flex: 1}]}
                   onPress={handleDateIconPress}
+                  disabled={loading}
                 >
                   <Text style={formData.date ? styles.selectedText : styles.placeholderText}>
                     {formData.date ? formData.date.toLocaleDateString() : 'Select Date'}
@@ -330,7 +705,9 @@ const DeliveryChallan = ({navigation}) => {
                 </TouchableOpacity>
                 <TouchableOpacity 
                   style={styles.iconButton}
-                  onPress={handleDateIconPress}>
+                  onPress={handleDateIconPress}
+                  disabled={loading}
+                >
                   <Icon name="calendar-today" size={20} color="#666" />
                 </TouchableOpacity>
                 {showDatePicker && (
@@ -345,9 +722,6 @@ const DeliveryChallan = ({navigation}) => {
             </LinearGradient>
           </View>
 
-      
-        
-
         {/* Delivery Mode */}
         <View style={styles.deliveryModeContainer}>
           <Text style={styles.sectionLabel}>Delivery Mode</Text>
@@ -357,7 +731,9 @@ const DeliveryChallan = ({navigation}) => {
                 styles.deliveryModeButton,
                 formData.deliveryMode === 'Customer' && styles.deliveryModeSelected
               ]}
-              onPress={() => handleDeliveryModeSelect('Customer')}>
+              onPress={() => handleDeliveryModeSelect('Customer')}
+              disabled={loading}
+            >
               <LinearGradient
                 colors={formData.deliveryMode === 'Customer' ? ['#7E5EA9', '#20AEBC'] : ['#7E5EA9', '#20AEBC']}
                 start={{ x: 0, y: 0 }}
@@ -377,7 +753,9 @@ const DeliveryChallan = ({navigation}) => {
                 styles.deliveryModeButton,
                 formData.deliveryMode === 'Branch' && styles.deliveryModeSelected
               ]}
-              onPress={() => handleDeliveryModeSelect('Branch')}>
+              onPress={() => handleDeliveryModeSelect('Branch')}
+              disabled={loading}
+            >
               <LinearGradient
                 colors={formData.deliveryMode === 'Branch' ? ['#7E5EA9', '#20AEBC'] : ['#7E5EA9', '#20AEBC']}
                 start={{ x: 0, y: 0 }}
@@ -400,7 +778,6 @@ const DeliveryChallan = ({navigation}) => {
         {/* Challan Created By */}
         <View style={styles.inputRow}>
           <View style={styles.inputContainer}>
-          
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                start={{ x: 0, y: 0 }}
@@ -408,7 +785,9 @@ const DeliveryChallan = ({navigation}) => {
               style={styles.inputGradient}>
               <TouchableOpacity
                 style={styles.dropdownInput}
-                onPress={() => setShowChallanCreatedByDropdown(true)}>
+                onPress={() => setShowChallanCreatedByDropdown(true)}
+                disabled={loading}
+              >
                 <Text style={formData.challanCreatedBy ? styles.selectedText : styles.placeholderText}>
                   {formData.challanCreatedBy || 'Challan Created By'}
                 </Text>
@@ -421,7 +800,6 @@ const DeliveryChallan = ({navigation}) => {
         {/* Customer Name & Parentage */}
         <View style={styles.inputRow}>
           <View style={styles.inputContainer}>
-          
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
               start={{ x: 0, y: 0 }}
@@ -433,12 +811,12 @@ const DeliveryChallan = ({navigation}) => {
                 onChangeText={(text) => handleInputChange('customerName', text)}
                 placeholder="Customer Name"
                 placeholderTextColor="#666"
+                editable={!loading}
               />
             </LinearGradient>
           </View>
           <View style={{marginBottom: 15}} />
           <View style={styles.inputContainer}>
-          
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
               start={{ x: 0, y: 0 }}
@@ -450,6 +828,7 @@ const DeliveryChallan = ({navigation}) => {
                 onChangeText={(text) => handleInputChange('parentage', text)}
                 placeholder="Parentage"
                 placeholderTextColor="#666"
+                editable={!loading}
               />
             </LinearGradient>
           </View>
@@ -458,7 +837,6 @@ const DeliveryChallan = ({navigation}) => {
         {/* Address */}
         <View style={styles.inputRow}>
           <View style={styles.fullWidthInputContainer}>
-          
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                start={{ x: 0, y: 0 }}
@@ -472,6 +850,7 @@ const DeliveryChallan = ({navigation}) => {
                 placeholderTextColor="#666"
                 multiline
                 numberOfLines={1}
+                editable={!loading}
               />
             </LinearGradient>
           </View>
@@ -480,7 +859,6 @@ const DeliveryChallan = ({navigation}) => {
         {/* Hypothecation & Mobile No */}
         <View style={styles.inputRow}>
           <View style={styles.inputContainer}>
-           
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                start={{ x: 0, y: 0 }}
@@ -492,12 +870,12 @@ const DeliveryChallan = ({navigation}) => {
                 onChangeText={(text) => handleInputChange('hypothecation', text)}
                 placeholder="Hypothecation"
                 placeholderTextColor="#666"
+                editable={!loading}
               />
             </LinearGradient>
           </View>
           <View style={{marginBottom: 15}} />
           <View style={styles.inputContainer}>
-           
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                start={{ x: 0, y: 0 }}
@@ -510,6 +888,7 @@ const DeliveryChallan = ({navigation}) => {
                 placeholder="Mobile No."
                 placeholderTextColor="#666"
                 keyboardType="phone-pad"
+                editable={!loading}
               />
             </LinearGradient>
           </View>
@@ -523,12 +902,14 @@ const DeliveryChallan = ({navigation}) => {
               <TouchableOpacity
                 key={option}
                 style={styles.radioOption}
-                onPress={() => handleAreYouCustomerSelect(option)}>
+                onPress={() => handleAreYouCustomerSelect(option)}
+                disabled={loading}
+              >
                 <LinearGradient
-                  colors={formData.areYouCustomer === option ? ['#12C857', '#12C857'] : ['#f0f0f0', '#f0f0f0']}
+                  colors={formData.areYouCustomer === (option === 'Yes' ? '1' : '0') ? ['#12C857', '#12C857'] : ['#f0f0f0', '#f0f0f0']}
                   style={styles.radioGradient}>
                   <View style={styles.radioInner}>
-                    {formData.areYouCustomer === option && (
+                    {formData.areYouCustomer === (option === 'Yes' ? '1' : '0') && (
                       <Icon name="check" size={24} color="#fff" />
                     )}
                   </View>
@@ -545,7 +926,6 @@ const DeliveryChallan = ({navigation}) => {
         {/* Tractor Name & Model */}
         <View style={styles.inputRow}>
           <View style={styles.inputContainer}>
-          
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                 start={{ x: 0, y: 0 }}
@@ -557,12 +937,12 @@ const DeliveryChallan = ({navigation}) => {
                 onChangeText={(text) => handleInputChange('tractorName', text)}
                 placeholder="Tractor Name"
                 placeholderTextColor="#666"
+                editable={!loading}
               />
             </LinearGradient>
           </View>
           <View style={{marginBottom: 15}} />
           <View style={styles.inputContainer}>
-         
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                 start={{ x: 0, y: 0 }}
@@ -570,7 +950,9 @@ const DeliveryChallan = ({navigation}) => {
               style={styles.inputGradient}>
               <TouchableOpacity
                 style={styles.dropdownInput}
-                onPress={() => setShowTractorModelDropdown(true)}>
+                onPress={() => setShowTractorModelDropdown(true)}
+                disabled={loading}
+              >
                 <Text style={formData.tractorModel ? styles.selectedText : styles.placeholderText}>
                   {formData.tractorModel || 'Select Model'}
                 </Text>
@@ -583,7 +965,6 @@ const DeliveryChallan = ({navigation}) => {
         {/* Chassis No & Engine No */}
         <View style={styles.inputRow}>
           <View style={styles.inputContainer}>
-          
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                start={{ x: 0, y: 0 }}
@@ -596,10 +977,13 @@ const DeliveryChallan = ({navigation}) => {
                   onChangeText={(text) => handleInputChange('chassisNo', text)}
                   placeholder="Chassis No"
                   placeholderTextColor="#666"
+                  editable={!loading}
                 />
                 <TouchableOpacity 
                   style={styles.iconButton}
-                  onPress={() => handleScanIconPress('Chassis No')}>
+                  onPress={() => handleScanIconPress('Chassis No')}
+                  disabled={loading}
+                >
                   <Icon name="qr-code-scanner" size={20} color="#666" />
                 </TouchableOpacity>
               </View>
@@ -607,7 +991,6 @@ const DeliveryChallan = ({navigation}) => {
           </View>
           <View style={{marginBottom: 15}} />
           <View style={styles.inputContainer}>
-          
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                start={{ x: 0, y: 0 }}
@@ -620,10 +1003,13 @@ const DeliveryChallan = ({navigation}) => {
                   onChangeText={(text) => handleInputChange('engineNo', text)}
                   placeholder="Engine No"
                   placeholderTextColor="#666"
+                  editable={!loading}
                 />
                 <TouchableOpacity 
                   style={styles.iconButton}
-                  onPress={() => handleScanIconPress('Engine No')}>
+                  onPress={() => handleScanIconPress('Engine No')}
+                  disabled={loading}
+                >
                   <Icon name="qr-code-scanner" size={20} color="#666" />
                 </TouchableOpacity>
               </View>
@@ -634,7 +1020,6 @@ const DeliveryChallan = ({navigation}) => {
         {/* Year of Manufacture */}
         <View style={styles.inputRow}>
           <View style={styles.inputContainer}>
-           
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                 start={{ x: 0, y: 0 }}
@@ -647,6 +1032,7 @@ const DeliveryChallan = ({navigation}) => {
                 placeholder="Year of Manufacture"
                 placeholderTextColor="#666"
                 keyboardType="numeric"
+                editable={!loading}
               />
             </LinearGradient>
           </View>
@@ -655,7 +1041,6 @@ const DeliveryChallan = ({navigation}) => {
         {/* Tires Make, FIP Make, Battery Make */}
         <View style={styles.inputRow}>
           <View style={styles.inputContainer}>
-          
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                 start={{ x: 0, y: 0 }}
@@ -663,7 +1048,9 @@ const DeliveryChallan = ({navigation}) => {
               style={styles.inputGradient}>
               <TouchableOpacity
                 style={styles.dropdownInput}
-                onPress={() => setShowTiresMakeDropdown(true)}>
+                onPress={() => setShowTiresMakeDropdown(true)}
+                disabled={loading}
+              >
                 <Text style={formData.tiresMake ? styles.selectedText : styles.placeholderText}>
                   {formData.tiresMake || 'Tires Make'}
                 </Text>
@@ -675,7 +1062,6 @@ const DeliveryChallan = ({navigation}) => {
 
         <View style={styles.inputRow}>
           <View style={styles.inputContainer}>
-           
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                 start={{ x: 0, y: 0 }}
@@ -683,7 +1069,9 @@ const DeliveryChallan = ({navigation}) => {
               style={styles.inputGradient}>
               <TouchableOpacity
                 style={styles.dropdownInput}
-                onPress={() => setShowFipMakeDropdown(true)}>
+                onPress={() => setShowFipMakeDropdown(true)}
+                disabled={loading}
+              >
                 <Text style={formData.fipMake ? styles.selectedText : styles.placeholderText}>
                   {formData.fipMake || 'FIP Make'}
                 </Text>
@@ -695,7 +1083,6 @@ const DeliveryChallan = ({navigation}) => {
 
         <View style={styles.inputRow}>
           <View style={styles.inputContainer}>
-          
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                 start={{ x: 0, y: 0 }}
@@ -703,7 +1090,9 @@ const DeliveryChallan = ({navigation}) => {
               style={styles.inputGradient}>
               <TouchableOpacity
                 style={styles.dropdownInput}
-                onPress={() => setShowBatteryMakeDropdown(true)}>
+                onPress={() => setShowBatteryMakeDropdown(true)}
+                disabled={loading}
+              >
                 <Text style={formData.batteryMake ? styles.selectedText : styles.placeholderText}>
                   {formData.batteryMake || 'Select Battery Make'}
                 </Text>
@@ -719,7 +1108,6 @@ const DeliveryChallan = ({navigation}) => {
         {/* Deal Price & Amount Paid */}
         <View style={styles.inputRow}>
           <View style={styles.inputContainer}>
-           
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                 start={{ x: 0, y: 0 }}
@@ -732,6 +1120,7 @@ const DeliveryChallan = ({navigation}) => {
                 placeholder="Deal Price"
                 placeholderTextColor="#666"
                 keyboardType="numeric"
+                editable={!loading}
               />
             </LinearGradient>
           </View>
@@ -750,6 +1139,7 @@ const DeliveryChallan = ({navigation}) => {
                 placeholder="Amount Paid"
                 placeholderTextColor="#666"
                 keyboardType="numeric"
+                editable={!loading}
               />
             </LinearGradient>
           </View>
@@ -758,7 +1148,6 @@ const DeliveryChallan = ({navigation}) => {
         {/* Total Paid & Balance Amount */}
         <View style={styles.inputRow}>
           <View style={styles.inputContainer}>
-         
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                 start={{ x: 0, y: 0 }}
@@ -771,12 +1160,12 @@ const DeliveryChallan = ({navigation}) => {
                 placeholder="Total Paid"
                 placeholderTextColor="#666"
                 keyboardType="numeric"
+                editable={!loading}
               />
             </LinearGradient>
           </View>
           <View style={{marginBottom: 15}} />
           <View style={styles.inputContainer}>
-           
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                 start={{ x: 0, y: 0 }}
@@ -789,6 +1178,7 @@ const DeliveryChallan = ({navigation}) => {
                 placeholder="Balance Amount"
                 placeholderTextColor="#666"
                 keyboardType="numeric"
+                editable={!loading}
               />
             </LinearGradient>
           </View>
@@ -797,7 +1187,6 @@ const DeliveryChallan = ({navigation}) => {
         {/* Payment Status & Financer Name */}
         <View style={styles.inputRow}>
           <View style={styles.inputContainer}>
-           
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
                 start={{ x: 0, y: 0 }}
@@ -805,7 +1194,9 @@ const DeliveryChallan = ({navigation}) => {
               style={styles.inputGradient}>
               <TouchableOpacity
                 style={styles.dropdownInput}
-                onPress={() => setShowPaymentStatusDropdown(true)}>
+                onPress={() => setShowPaymentStatusDropdown(true)}
+                disabled={loading}
+              >
                 <Text style={formData.paymentStatus ? styles.selectedText : styles.placeholderText}>
                   {formData.paymentStatus || 'Select Payment Status'}
                 </Text>
@@ -815,13 +1206,14 @@ const DeliveryChallan = ({navigation}) => {
           </View>
           <View style={{marginBottom: 15}} />
           <View style={styles.inputContainer}>
-           
             <LinearGradient
               colors={['#7E5EA9', '#20AEBC']}
               style={styles.inputGradient}>
               <TouchableOpacity
                 style={styles.dropdownInput}
-                onPress={() => setShowFinancerDropdown(true)}>
+                onPress={() => setShowFinancerDropdown(true)}
+                disabled={loading}
+              >
                 <Text style={formData.financerName ? styles.selectedText : styles.placeholderText}>
                   {formData.financerName || 'Select Financer'}
                 </Text>
@@ -834,7 +1226,6 @@ const DeliveryChallan = ({navigation}) => {
         {/* Accessories Heading */}
         <View style={styles.accessoriesHeader}>
           <Text style={styles.sectionHeading}>Accessories Given With Tractor</Text>
-         
         </View>
 
         {/* Accessories Grid */}
@@ -843,7 +1234,9 @@ const DeliveryChallan = ({navigation}) => {
             <TouchableOpacity
               key={accessory}
               style={styles.accessoryItem}
-              onPress={() => handleAccessoryToggle(accessory)}>
+              onPress={() => handleAccessoryToggle(accessory)}
+              disabled={loading}
+            >
               <LinearGradient
                 colors={accessories[accessory] ? ['#12C857', '#12C857'] : ['#f0f0f0', '#f0f0f0']}
                 style={styles.accessoryCheckbox}>
@@ -859,17 +1252,17 @@ const DeliveryChallan = ({navigation}) => {
             </TouchableOpacity>
           ))}
         </View>
-<View style={{flexDirection:"row",justifyContent:"space-between",marginBottom:20}}>
-    <Text style={{fontSize:16,fontFamily:"Inter_28pt-Regular"}}>Add Item</Text>
-    <View>
-    <TouchableOpacity>
-     <Icon name="add" size={25} color="black" style={{marginRight:20}} />
-     </TouchableOpacity>
-     </View>
-</View>
+        
+        <View style={{flexDirection:"row",justifyContent:"space-between",marginBottom:20}}>
+            <Text style={{fontSize:16,fontFamily:"Inter_28pt-Regular"}}>Add Item</Text>
+            <View>
+            <TouchableOpacity onPress={handleAddItem} disabled={loading}>
+             <Icon name="add" size={25} color="black" style={{marginRight:20}} />
+             </TouchableOpacity>
+             </View>
+        </View>
 
-
-{/* Terms and Conditions */}
+        {/* Terms and Conditions */}
         <View style={styles.termsSection}>
           <Text style={styles.termsHeading}>Terms and Conditions</Text>
 
@@ -894,15 +1287,6 @@ const DeliveryChallan = ({navigation}) => {
   {' '}The Tractor Is Covered Under The Manufacturer's Standard Warranty Policy. All Services And Repairs During The Warranty Period Must Be Carried Out At Authorized Service Centers Only.
 </Text>
 
-
-         <Text style={styles.termItem}>
-   <Text style={{ fontSize: 14, fontFamily: 'Inter_28pt-SemiBold' }}>
-    Ownership And Registration :
-  </Text>
-  {' '}The Ownership Of The Tractor Shall Be Transferred To The Customer Upon Full Payment And Successful Registration With The Relevant Motor Vehicle Authority. The Dealer Will Assist With Documentation If Required.
-</Text>
-
-
          <Text style={styles.termItem}>
    <Text style={{ fontSize: 14, fontFamily: 'Inter_28pt-SemiBold' }}>
     Payment Terms :
@@ -917,7 +1301,6 @@ const DeliveryChallan = ({navigation}) => {
   {' '}In Case Of Any Disputes Arising From This Delivery, The Matter Shall Be Resolved Amicably Between Both Parties. If Unresolved, It Will Be Subject To The Jurisdiction Of The Dealer's Location.
 </Text>
 
-
           <Text style={styles.termItem}>
   <Text style={{ fontSize: 14, fontFamily:"Inter_28pt-SemiBold" }}>
     Acknowledgement :
@@ -930,6 +1313,7 @@ const DeliveryChallan = ({navigation}) => {
             style={styles.termsCheckbox}
             onPress={() => setAcceptTerms(!acceptTerms)}
             activeOpacity={0.8}
+            disabled={loading}
           >
             <LinearGradient colors={['grey', 'grey']}  style={styles.checkboxGradient}>
               <View style={[styles.checkboxInner, acceptTerms && styles.checkboxInnerSelected]}>
@@ -946,6 +1330,7 @@ const DeliveryChallan = ({navigation}) => {
             <TouchableOpacity 
               style={styles.signatureBox} 
               onPress={() => showImagePickerOptions(setCustomerSignature)}
+              disabled={loading}
             >
               {customerSignature ? (
                 <Image 
@@ -961,6 +1346,7 @@ const DeliveryChallan = ({navigation}) => {
             <TouchableOpacity 
               style={styles.signatureBox} 
               onPress={() => showImagePickerOptions(setManagerSignature)}
+              disabled={loading}
             >
               {managerSignature ? (
                 <Image 
@@ -976,6 +1362,7 @@ const DeliveryChallan = ({navigation}) => {
             <TouchableOpacity 
               style={styles.signatureBox} 
               onPress={() => showImagePickerOptions(setDriverSignature)}
+              disabled={loading}
             >
               {driverSignature ? (
                 <Image 
@@ -990,46 +1377,83 @@ const DeliveryChallan = ({navigation}) => {
           </View>
         </View>
 
-                 <View style={styles.buttonContainer}>
-      <TouchableOpacity style={[styles.button, { backgroundColor: '#7E5EA9',width:"40%" }]} onPress={()=> navigation.navigate("Pdfpage")}>
-        <Text style={styles.buttonText1}>Generated Pdf</Text>
-      </TouchableOpacity>
+        <View style={styles.buttonContainer}>
+          <TouchableOpacity 
+            style={[styles.button, { backgroundColor: '#7E5EA9',width:"40%" }, loading && styles.disabledButton]} 
+            onPress={()=> navigation.navigate("Pdfpage")}
+            disabled={loading}
+          >
+            <Text style={styles.buttonText1}>Generated Pdf</Text>
+          </TouchableOpacity>
 
-      <TouchableOpacity style={[styles.button, { backgroundColor: '#B00E0E' }]}>
-        <Text style={styles.buttonText1}>Save</Text>
-      </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.button, { backgroundColor: '#B00E0E' }, loading && styles.disabledButton]} 
+            onPress={handleSubmit}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.buttonText1}>{isEditMode ? 'Update' : 'Save'}</Text>
+            )}
+          </TouchableOpacity>
 
-      <TouchableOpacity style={[styles.button, { backgroundColor: '#20AEBC' }]}>
-        <Text style={styles.buttonText1}>Share Pdf</Text>
-      </TouchableOpacity>
-    </View>
-    <View style={styles.buttonContainer}>
-      <TouchableOpacity style={[styles.button, { backgroundColor: '#149418',width:"40%" }]}>
-        <Text style={styles.buttonText1}>Excel</Text>
-      </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.button, { backgroundColor: '#20AEBC' }, loading && styles.disabledButton]} 
+            onPress={handleGeneratePDF}
+            disabled={loading}
+          >
+            <Text style={styles.buttonText1}>Share Pdf</Text>
+          </TouchableOpacity>
+        </View>
+        
+        <View style={styles.buttonContainer}>
+          <TouchableOpacity 
+            style={[styles.button, { backgroundColor: '#149418',width:"40%" }, loading && styles.disabledButton]} 
+            disabled={loading}
+          >
+            <Text style={styles.buttonText1}>Excel</Text>
+          </TouchableOpacity>
 
-      <TouchableOpacity style={[styles.button, { backgroundColor: '#20AEBC' }]}>
-        <Text style={styles.buttonText1}>Backup</Text>
-      </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.button, { backgroundColor: '#20AEBC' }, loading && styles.disabledButton]} 
+            disabled={loading}
+          >
+            <Text style={styles.buttonText1}>Backup</Text>
+          </TouchableOpacity>
 
-      <TouchableOpacity style={[styles.button, { backgroundColor: '#7E5EA9' }]}>
-        <Text style={styles.buttonText1}>Restore</Text>
-      </TouchableOpacity>
-    </View>
+          <TouchableOpacity 
+            style={[styles.button, { backgroundColor: '#7E5EA9' }, loading && styles.disabledButton]} 
+            disabled={loading}
+          >
+            <Text style={styles.buttonText1}>Restore</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Buttons */}
         <View style={styles.buttonsContainer}>
-          <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
-            <Text style={styles.buttonText}>Submit</Text>
+          <TouchableOpacity 
+            style={[styles.submitButton, loading && styles.disabledButton]} 
+            onPress={handleSubmit}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.buttonText}>
+                {isEditMode ? 'Update Delivery Challan' : 'Submit Delivery Challan'}
+              </Text>
+            )}
           </TouchableOpacity>
           
-          <TouchableOpacity style={styles.homeButton} onPress={handleHome}>
+          <TouchableOpacity 
+            style={[styles.homeButton, loading && styles.disabledButton]} 
+            onPress={handleHome}
+            disabled={loading}
+          >
             <Text style={styles.buttonText}>Home</Text>
           </TouchableOpacity>
-         
         </View>
-
-        
 
         {/* Dropdown Modals */}
         <Modal
@@ -1110,6 +1534,12 @@ const styles = StyleSheet.create({
     color: 'white',
     fontFamily:"Inter_28pt-SemiBold"
   },
+  editModeText: {
+    fontSize: 12,
+    color: '#f0e6ff',
+    fontFamily: 'Inter_28pt-SemiBold',
+    marginTop: 5,
+  },
   scrollView: {
     flex: 1,
     padding: 15,
@@ -1117,30 +1547,8 @@ const styles = StyleSheet.create({
   formNoContainer: {
     marginBottom: 15,
   },
-  formNoLabel: {
-    fontSize: 14,
-    marginBottom: 5,
-    color: '#000',
-    fontWeight: '500',
-  },
   formNoInputContainer: {
     width: '100%',
-  },
-  dateContainer: {
-    marginBottom: 20,
-  },
-  dateLabel: {
-    fontSize: 14,
-    marginBottom: 5,
-    color: '#000',
-    fontWeight: '500',
-  },
-  dateInputContainer: {
-    width: '100%',
-  },
-  dateInput: {
-    flexDirection: 'row',
-    alignItems: 'center',
   },
   inputGradient: {
     borderRadius: 8,
@@ -1187,9 +1595,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     fontSize: 14,
   },
-  deliveryModeSelected: {
-    // Selected state handled by gradient
-  },
   deliveryModeTextSelected: {
     color: '#fff',
     backgroundColor: 'transparent',
@@ -1206,17 +1611,10 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     flex: 1,
-    
   },
   fullWidthInputContainer: {
     width: '100%',
     marginBottom: 1,
-  },
-  inputLabel: {
-    fontSize: 12,
-    marginBottom: 5,
-    color: '#000',
-    fontWeight: '500',
   },
   dropdownInput: {
     flexDirection: 'row',
@@ -1240,9 +1638,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 8,
   },
-  multilineInput: {
-
-  },
   radioSection: {
     marginBottom: 20,
   },
@@ -1265,7 +1660,6 @@ const styles = StyleSheet.create({
     width: 25,
     height: 25,
     borderRadius: 3,
-    
     marginRight: 10,
   },
   radioInner: {
@@ -1286,19 +1680,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 5,
-  },
-  addItemButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#7E5EA9',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-  },
-  addItemText: {
-    color: 'black',
-    fontSize: 12,
-    marginLeft: 4,
   },
   accessoriesGrid: {
     marginBottom: 0,
@@ -1343,13 +1724,6 @@ const styles = StyleSheet.create({
   },
   homeButton: {
     backgroundColor: '#20AEBC',
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  pdfButton: {
-    backgroundColor: '#7E5EA9',
     padding: 15,
     borderRadius: 8,
     alignItems: 'center',
@@ -1422,7 +1796,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 10,
-    
     backgroundColor: '#fff',
     borderRadius: 8,
   },
@@ -1440,11 +1813,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#000',
   },
-   signatureSection: {
+  signatureSection: {
     marginBottom: 20,
   },
   signatureRow: {
-  marginTop: 20,
+    marginTop: 20,
   },
   signatureBox: {
     flex: 1,
@@ -1468,13 +1841,13 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 10,
   },
-   buttonContainer: {
+  buttonContainer: {
     flexDirection: 'row',
-     justifyContent: 'space-around',
+    justifyContent: 'space-around',
     marginBottom: 12,
   },
   button: {
-    paddingHorizontal: 15, // Wraps background around text
+    paddingHorizontal: 15,
     paddingVertical: 15,
     borderRadius: 8,
     alignItems: 'center',
@@ -1482,7 +1855,9 @@ const styles = StyleSheet.create({
   buttonText1: {
     color: '#fff',
     fontFamily:"Inter_28pt-SemiBold",
-  
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
 });
 

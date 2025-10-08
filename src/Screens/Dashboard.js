@@ -44,11 +44,14 @@ const Dashboard = ({navigation}) => {
       >
         <View style={styles.headerContent}>
           {/* Left Side: Image */}
+
+          <TouchableOpacity onPress={()=> navigation.navigate("Profile")}>
           <Image 
             source={require('../Asset/Images/profilerc.jpg')}
             style={styles.headerImage}
           />
-          
+          </TouchableOpacity>
+
           {/* Center: Dashboard Text */}
           <Text style={styles.headerText}>Dashboard</Text>
           
