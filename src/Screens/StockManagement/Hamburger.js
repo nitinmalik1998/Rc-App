@@ -18,11 +18,17 @@ const MENU_ITEMS = [
   { id: '2', title: 'Stock Location', icon: 'location-on', navigation: 'StockLocation' },
   { id: '3', title: 'Transit Status', icon: 'local-shipping', navigation: 'TransitStatus' },
   { id: '4', title: 'Depot', icon: 'warehouse', navigation: 'Depot' },
-  { id: '5', title: 'Finance', icon: 'account-balance', navigation: 'Finance' },
-  { id: '6', title: 'Report', icon: 'bar-chart', navigation: 'Report' },
-  { id: '7', title: 'Add Model', icon: 'add-box', navigation: 'AddModel' },
-  { id: '9', title: 'Form', icon: 'assignment-add', navigation: 'Form' },
+  { id: '5', title: 'Finance', icon: 'account-balance-wallet', navigation: 'Finance' },
+  { id: '6', title: 'Report', icon: 'insert-chart-outlined', navigation: 'Report' },
+  { id: '7', title: 'Add Model', icon: 'add-circle-outline', navigation: 'AddModel' },
+  { id: '9', title: 'Delivery Form', icon: 'assignment', navigation: 'Form' },
+  { id: '10', title: 'All Models', icon: 'inventory', navigation: 'GetAllModel' },
+  { id: '11', title: 'All Delivery Form', icon: 'assignment-turned-in', navigation: 'AllDelivery' },
+  { id: '12', title: 'Add Model Stocks', icon: 'add-shopping-cart', navigation: 'AddModelStocks' },
+  { id: '13', title: 'All Location', icon: 'place', navigation: 'AllLocation' },
 ];
+
+
 
 const HamburgerPage = () => {
   const insets = useSafeAreaInsets();
@@ -32,7 +38,7 @@ const HamburgerPage = () => {
     <View style={styles.itemWrapper}>
       <TouchableOpacity
         style={styles.menuItem}
-        onPress={() => navigation.navigate(item.navigation)}
+        onPress={() => navigation.replace(item.navigation)}
       >
         {/* Left side: Icon + Text */}
         <View style={styles.leftSection}>

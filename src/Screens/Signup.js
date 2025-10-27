@@ -13,6 +13,7 @@ import {
 import LinearGradient from 'react-native-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import axios from 'axios';
+import Ionicons from 'react-native-vector-icons/Ionicons'; // <-- back arrow icon
 
 const Signup = ({ navigation }) => {
   const insets = useSafeAreaInsets();
@@ -38,7 +39,6 @@ const Signup = ({ navigation }) => {
       [field]: value
     }));
     
-    // Clear error when user starts typing
     if (errors[field]) {
       setErrors(prev => ({
         ...prev,
@@ -101,7 +101,6 @@ const Signup = ({ navigation }) => {
     setLoading(true);
 
     try {
-      // Create FormData
       const data = new FormData();
       data.append('first_name', formData.firstName.trim());
       data.append('last_name', formData.lastName.trim());
@@ -109,7 +108,6 @@ const Signup = ({ navigation }) => {
       data.append('phone', formData.phone.trim());
       data.append('password', formData.password.trim());
 
-      // API configuration
       const config = {
         method: 'post',
         maxBodyLength: Infinity,
@@ -120,19 +118,16 @@ const Signup = ({ navigation }) => {
         data: data,
       };
 
-      // Make API call
       const response = await axios(config);
-
-      // Handle successful signup
       console.log('Signup Response:', response.data);
       
-      // Check for success in different possible response formats
-      if (response.data.success === true || 
-          response.data.status === 'success' || 
-          response.data.message?.toLowerCase().includes('success') ||
-          response.status === 200 || 
-          response.status === 201) {
-        
+      if (
+        response.data.success === true || 
+        response.data.status === 'success' || 
+        response.data.message?.toLowerCase().includes('success') ||
+        response.status === 200 || 
+        response.status === 201
+      ) {
         Alert.alert(
           'Success',
           'Account created successfully!',
@@ -144,27 +139,22 @@ const Signup = ({ navigation }) => {
           ]
         );
       } else {
-        // Handle API error response
         const errorMessage = response.data.message || 
-                            response.data.error || 
-                            'Unable to create account';
+                             response.data.error || 
+                             'Unable to create account';
         Alert.alert('Signup Failed', errorMessage);
       }
     } catch (error) {
-      // Handle network or server errors
       console.log('Signup Error:', error);
       
       if (error.response) {
-        // Server responded with error status
         const errorMessage = error.response.data?.message || 
-                            error.response.data?.error || 
-                            'Signup failed. Please try again.';
+                             error.response.data?.error || 
+                             'Signup failed. Please try again.';
         Alert.alert('Signup Failed', errorMessage);
       } else if (error.request) {
-        // Network error
         Alert.alert('Network Error', 'Please check your internet connection and try again.');
       } else {
-        // Other errors
         Alert.alert('Error', 'Something went wrong. Please try again.');
       }
     } finally {
@@ -172,16 +162,36 @@ const Signup = ({ navigation }) => {
     }
   };
 
+  const handleBack = () => {
+    if (navigation?.canGoBack?.()) {
+      navigation.goBack();
+    } else {
+      navigation.replace('LoginScreen');
+    }
+  };
+
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <StatusBar backgroundColor="white" barStyle="dark-content" />
       
-      {/* Header with Linear Gradient */}
+      {/* Header with Linear Gradient + Back Arrow */}
       <LinearGradient
         colors={['#7E5EA9', '#20AEBC']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 0 }}
         style={styles.titleContainer}>
+
+        {/* Back Button (absolute) */}
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={handleBack}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          disabled={loading}
+        >
+          <Ionicons name="arrow-back" size={24} color="#fff" />
+        </TouchableOpacity>
+
+        {/* Title centered */}
         <Text style={styles.title}>Makroo Motor Corp.</Text>
       </LinearGradient>
 
@@ -327,18 +337,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // Back button positioned without shifting the centered title
+  backButton: {
+    position: 'absolute',
+    left: 16,
+    top: '50%',
+    transform: [{ translateY: -12 }], // centers the 24px icon vertically within the header
+    padding: 6,
+  },
   title: { 
     fontSize: 22, 
     color: '#fff', 
     textAlign: 'center',
-    fontFamily: "Inter_28pt-SemiBold" 
+    fontFamily: 'Inter_28pt-SemiBold',
   },
   subtitle: {
     fontSize: 20,
     marginBottom: 30,
     color: '#333',
     alignSelf: 'center',
-    fontFamily: "Inter_28pt-Medium"
+    fontFamily: 'Inter_28pt-Medium',
   },
   inputContainer: { 
     marginBottom: 5 
@@ -361,14 +379,14 @@ const styles = StyleSheet.create({
   inputText: { 
     color: '#333', 
     fontSize: 16,
-    fontFamily: "Inter_28pt-Regular" 
+    fontFamily: 'Inter_28pt-Regular',
   },
   errorText: { 
     color: '#ff0000', 
     fontSize: 12, 
     marginLeft: 5, 
     marginBottom: 10,
-    fontFamily: "Inter_28pt-Regular" 
+    fontFamily: 'Inter_28pt-Regular',
   },
   signupButton: {
     width: '100%',
@@ -387,24 +405,24 @@ const styles = StyleSheet.create({
   signupButtonText: { 
     color: '#fff', 
     fontSize: 16,
-    fontFamily: "Inter_28pt-Medium"  
+    fontFamily: 'Inter_28pt-Medium',
   },
   loginContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 10,
-    marginBottom:50
+    marginBottom: 50,
   },
   loginText: { 
     color: '#666', 
     fontSize: 15,
-    fontFamily: "Inter_28pt-Medium" 
+    fontFamily: 'Inter_28pt-Medium',
   },
   loginLink: { 
     color: '#7E5EA9', 
     fontSize: 15, 
-    fontFamily: "Inter_28pt-SemiBold" 
+    fontFamily: 'Inter_28pt-SemiBold',
   },
   disabledButton: {
     opacity: 0.6,

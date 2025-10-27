@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useRef, useState} from 'react';
 import {
   View,
   Text,
@@ -13,73 +13,61 @@ import {
   ActionSheetIOS,
   Platform,
   PermissionsAndroid,
+  ActivityIndicator,
 } from 'react-native';
-import {RadioButton} from 'react-native-paper';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const initialFormData = {
+  CustomerName: '',
+  FathersName: '',
+  percentage: '',
+  address: '',
+  mobileNo: '',
+  TractorName: '',
+  tractorModel: '',
+  date: null,
+  YearofManufacture: '',
+  chassisNo: '',       // mapped to tractor_number
+  engineNo: '',
+  DocumentNumber:'',
+  documentType: '',
+  otherDocumentType: '',
+};
 
 const Form = ({navigation}) => {
   const insets = useSafeAreaInsets();
-  const [rcIssued, setRcIssued] = useState('yes');
-  const [noPlateIssued, setNoPlateIssued] = useState('yes');
-  const [tractorOwner, setTractorOwner] = useState('yes');
+  const scrollRef = useRef(null);
+
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [showDocumentTypeDropdown, setShowDocumentTypeDropdown] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
-  
-  const [formData, setFormData] = useState({
-    CustomerName: '',
-    FathersName: '',
-    percentage: '',
-    address: '',
-    mobileNo: '',
-    TractorName: '',
-    tractorModel: '',
-    date: null,
-    YearofManufacture: '',
-    chassisNo: '',
-    engineNo: '',
-    DocumentNumber:'',
-    documentType: '',
-    otherDocumentType: '',
-  });
+
+  const [submitting, setSubmitting] = useState(false);
+  const [apiResponse, setApiResponse] = useState(null);
+  const [apiError, setApiError] = useState(null);
+
+  const [formData, setFormData] = useState(initialFormData);
 
   // Image states
-  const [customerPhoto, setCustomerPhoto] = useState(null);
   const [customerSignature, setCustomerSignature] = useState(null);
   const [managerSignature, setManagerSignature] = useState(null);
 
   const tractorModels = [
-    "3028EN",
-    "3036EN", 
-    "3036E",
-    "5105",
-    "5105 4WD",
-    "5050D Gear Pro",
-    "5210 Gear Pro",
-    "5050D 4WD Gear Pro",
-    "5210 4WD Gear Pro",
-    "5310 CRDI",
-    "5310 4WD CRDI",
-    "5405 CRDI",
-    "5405 4WD CRDI",
-    "5075 2WD",
-    "5075 4WD"
+    "3028EN","3036EN","3036E","5105","5105 4WD","5050D Gear Pro","5210 Gear Pro",
+    "5050D 4WD Gear Pro","5210 4WD Gear Pro","5310 CRDI","5310 4WD CRDI","5405 CRDI",
+    "5405 4WD CRDI","5075 2WD","5075 4WD"
   ];
 
   const documentTypes = [
-    "Sale Certificate",
-    "Insurance",
-    "Tax Invoice",
-    "Form 21",
-    "E-way Bill",
-    "Other"
+    "Sale Certificate","Insurance","Tax Invoice","Form 21","E-way Bill","Other"
   ];
 
-  // Camera permissions
   const requestCameraPermission = async () => {
     if (Platform.OS === 'android') {
       try {
@@ -138,24 +126,21 @@ const Form = ({navigation}) => {
     launchCamera(
       { mediaType: 'photo', quality: 1, cameraType: 'back', saveToPhotos: true },
       (response) => {
-        if (response.didCancel) return;
-        if (response.assets && response.assets.length > 0) setImageFunction(response.assets[0]);
+        if (response?.didCancel) return;
+        if (response?.assets?.length > 0) setImageFunction(response.assets[0]);
       }
     );
   };
 
   const handleImageLibrary = (setImageFunction) => {
     launchImageLibrary({ mediaType: 'photo', quality: 1 }, (response) => {
-      if (response.didCancel) return;
-      if (response.assets && response.assets.length > 0) setImageFunction(response.assets[0]);
+      if (response?.didCancel) return;
+      if (response?.assets?.length > 0) setImageFunction(response.assets[0]);
     });
   };
 
   const handleInputChange = (field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value,
-    }));
+    setFormData(prev => ({ ...prev, [field]: value }));
   };
 
   const handleModelSelect = (model) => {
@@ -170,68 +155,130 @@ const Form = ({navigation}) => {
 
   const handleDateChange = (event, selectedDate) => {
     setShowDatePicker(false);
-    if (selectedDate) {
-      handleInputChange('date', selectedDate);
+    if (selectedDate) handleInputChange('date', selectedDate);
+  };
+
+  // === API SUBMIT (uses AsyncStorage userId -> user_id) ===
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    setApiResponse(null);
+    setApiError(null);
+
+    try {
+      const storedUserId = await AsyncStorage.getItem('userId');
+      const userId = (storedUserId || '').toString().trim();
+      if (!userId) throw new Error('Missing userId in AsyncStorage.');
+
+      const data = new FormData();
+      data.append('customer_name', (formData.CustomerName || '').trim());
+      data.append('father_name',   (formData.FathersName  || '').trim());
+      data.append('address',       (formData.address      || '').trim());
+      data.append('user_id',       userId);
+
+      // map chassis -> tractor_number
+      data.append('tractor_number', (formData.chassisNo || '').trim());
+      data.append('engine_number',  (formData.engineNo  || '').trim());
+
+      const docType = formData.documentType === 'Other'
+        ? (formData.otherDocumentType || '').trim()
+        : (formData.documentType || '').trim();
+      data.append('document_type', docType);
+      data.append('document_number', (formData.DocumentNumber || '').trim());
+
+      // "YYYY-MM-DD HH:mm:ss"
+      const now = new Date();
+      const submittedAt =
+        `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ` +
+        `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+      data.append('submitted_at', submittedAt);
+
+      if (customerSignature?.uri) {
+        data.append('customer_signature', {
+          uri: customerSignature.uri,
+          type: customerSignature.type || 'image/jpeg',
+          name: customerSignature.fileName || 'customer_signature.jpg',
+        });
+      }
+      if (managerSignature?.uri) {
+        data.append('manager_signature', {
+          uri: managerSignature.uri,
+          type: managerSignature.type || 'image/jpeg',
+          name: managerSignature.fileName || 'manager_signature.jpg',
+        });
+      }
+
+      const response = await axios.post(
+        'https://argosmob.uk/makroo/public/api/v1/delivery-forms',
+        data,
+        {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          maxBodyLength: Infinity,
+        }
+      );
+
+      setApiResponse(response.data);
+
+      // ✅ Clear the form + images
+      setFormData(initialFormData);
+      setCustomerSignature(null);
+      setManagerSignature(null);
+
+      // Optional: scroll to top so the user sees the cleared form/header
+      if (scrollRef.current?.scrollTo) {
+        scrollRef.current.scrollTo({ y: 0, animated: true });
+      }
+
+      Alert.alert('Success', 'Form submitted successfully!');
+      console.log('API Response:', JSON.stringify(response.data, null, 2));
+    } catch (error) {
+      const msg = error?.response?.data ?? error?.message ?? 'Unknown error';
+      setApiError(msg);
+      Alert.alert('Error', 'Failed to submit the form. Please try again.');
+      console.error('API Error:', msg);
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const handleSubmit = () => {
-    Alert.alert('Success', 'Form submitted successfully!');
-  };
-
-  const handleHome = () => {
-    navigation.navigate('Dashboard');
-  }
-
-  const handleGeneratePDF = () => {
-    Alert.alert('PDF', 'PDF Challan generated!');
-  };
-
-  // Placeholder functions for icon actions
-  const handleDateIconPress = () => {
-    setShowDatePicker(true);
-  };
-
-  const handleChassisScanPress = () => {
-    Alert.alert('Scan', 'Open chassis number scanner');
-  };
-
-  const handleEngineScanPress = () => {
-    Alert.alert('Scan', 'Open engine number scanner');
-  };
+  const handleHome = () => navigation.navigate('Dashboard');
+  const handleDateIconPress = () => setShowDatePicker(true);
 
   const renderModelItem = ({item}) => (
-    <TouchableOpacity
-      style={styles.modelItem}
-      onPress={() => handleModelSelect(item)}>
+    <TouchableOpacity style={styles.modelItem} onPress={() => handleModelSelect(item)}>
       <Text style={styles.modelItemText}>{item}</Text>
     </TouchableOpacity>
   );
-
   const renderDocumentTypeItem = ({item}) => (
-    <TouchableOpacity
-      style={styles.modelItem}
-      onPress={() => handleDocumentTypeSelect(item)}>
+    <TouchableOpacity style={styles.modelItem} onPress={() => handleDocumentTypeSelect(item)}>
       <Text style={styles.modelItemText}>{item}</Text>
     </TouchableOpacity>
   );
 
   return (
-    <View
-      style={{flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom}}>
-      {/* Header with Gradient */}
-      <LinearGradient
-        colors={['#7E5EA9', '#20AEBC']}
-        start={{x: 0, y: 0}}
-        end={{x: 1, y: 0}}
-        style={styles.header}>
-        <Text style={styles.companyName}>Makroo Motor Corporation</Text>
-        <Text style={styles.companyName}>Form</Text>
+    <View style={{flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom}}>
+      {/* Header */}
+      <LinearGradient colors={['#7E5EA9', '#20AEBC']} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.header}>
+         <View style={styles.headerContent}>
+                                    {/* Left Side: Menu Icon */}
+                                    <TouchableOpacity style={styles.iconButton} onPress={() => navigation.navigate('Hamburger')}>
+                                      <Icon name="reorder" size={25} color="#fff" />
+                                    </TouchableOpacity>
+                          
+                                    {/* Center: Dashboard Text */}
+                                    <View>
+                                      <Text style={styles.companyName}>Makroo Motor Corp.</Text>
+                                      <Text style={styles.companyName1}>Form</Text>
+                                    </View>
+                          
+                                    {/* Right Side: Icon */}
+                                    <TouchableOpacity style={styles.iconButton}>
+                                      <Icon name="notifications-on" size={25} color="#fff" />
+                                    </TouchableOpacity>
+                                  </View>
        
       </LinearGradient>
 
-      <ScrollView style={styles.container}>
-        {/* Date and Form No */}
+      <ScrollView style={styles.container} ref={scrollRef}>
         <Text style={styles.Date}>09-08-25</Text>
         <Text style={styles.formNo}>Form</Text>
 
@@ -239,11 +286,7 @@ const Form = ({navigation}) => {
         <View style={styles.formContainer}>
           <View style={styles.row}>
             <View style={styles.inputContainer}>
-              <LinearGradient
-                colors={['#7E5EA9', '#20AEBC']}
-                start={{x: 0, y: 0}}
-                end={{x: 1, y: 0}}
-                style={styles.inputGradient}>
+              <LinearGradient colors={['#7E5EA9', '#20AEBC']} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.inputGradient}>
                 <TextInput
                   style={styles.input}
                   value={formData.CustomerName}
@@ -252,13 +295,8 @@ const Form = ({navigation}) => {
                 />
               </LinearGradient>
             </View>
-
             <View style={styles.inputContainer}>
-              <LinearGradient
-                colors={['#7E5EA9', '#20AEBC']}
-                start={{x: 0, y: 0}}
-                end={{x: 1, y: 0}}
-                style={styles.inputGradient}>
+              <LinearGradient colors={['#7E5EA9', '#20AEBC']} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.inputGradient}>
                 <TextInput
                   style={styles.input}
                   value={formData.FathersName}
@@ -270,14 +308,8 @@ const Form = ({navigation}) => {
           </View>
 
           <View style={styles.row}>
-           
-
             <View style={styles.inputContainer}>
-              <LinearGradient
-                colors={['#7E5EA9', '#20AEBC']}
-                start={{x: 0, y: 0}}
-                end={{x: 1, y: 0}}
-                style={styles.inputGradient}>
+              <LinearGradient colors={['#7E5EA9', '#20AEBC']} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.inputGradient}>
                 <TextInput
                   style={styles.input}
                   value={formData.address}
@@ -290,11 +322,7 @@ const Form = ({navigation}) => {
 
           <View style={styles.row}>
             <View style={styles.inputContainer}>
-              <LinearGradient
-                colors={['#7E5EA9', '#20AEBC']}
-                start={{x: 0, y: 0}}
-                end={{x: 1, y: 0}}
-                style={styles.inputGradient}>
+              <LinearGradient colors={['#7E5EA9', '#20AEBC']} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.inputGradient}>
                 <TextInput
                   style={styles.input}
                   value={formData.mobileNo}
@@ -306,17 +334,11 @@ const Form = ({navigation}) => {
             </View>
 
             <View style={styles.inputContainer}>
-              <LinearGradient
-                colors={['#7E5EA9', '#20AEBC']}
-                start={{x: 0, y: 0}}
-                end={{x: 1, y: 0}}
-                style={styles.inputGradient}>
+              <LinearGradient colors={['#7E5EA9', '#20AEBC']} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.inputGradient}>
                 <TextInput
                   style={styles.input}
                   value={formData.TractorName}
-                  onChangeText={text =>
-                    handleInputChange('TractorName', text)
-                  }
+                  onChangeText={text => handleInputChange('TractorName', text)}
                   placeholder="Tractor Name"
                 />
               </LinearGradient>
@@ -325,44 +347,20 @@ const Form = ({navigation}) => {
 
           <View style={styles.row}>
             <View style={styles.inputContainer}>
-              <LinearGradient
-                colors={['#7E5EA9', '#20AEBC']}
-                start={{x: 0, y: 0}}
-                end={{x: 1, y: 0}}
-                style={styles.inputGradient}>
-                <TouchableOpacity 
-                  style={styles.input}
-                  onPress={() => setShowModelDropdown(true)}
-                >
-                  <Text style={
-                    formData.tractorModel ? 
-                    styles.selectedModelText : 
-                    styles.placeholderText
-                  }>
+              <LinearGradient colors={['#7E5EA9', '#20AEBC']} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.inputGradient}>
+                <TouchableOpacity style={styles.input} onPress={() => setShowModelDropdown(true)}>
+                  <Text style={formData.tractorModel ? styles.selectedModelText : styles.placeholderText}>
                     {formData.tractorModel || 'Select Tractor Model'}
                   </Text>
-                  <Icon 
-                    name="keyboard-arrow-down" 
-                    size={25} 
-                    color="#666" 
-                    style={styles.dropdownIcon}
-                  />
+                  <Icon name="keyboard-arrow-down" size={25} color="#666" style={styles.dropdownIcon}/>
                 </TouchableOpacity>
               </LinearGradient>
             </View>
-
-           
           </View>
 
           <View style={styles.row}>
-            
-
             <View style={styles.inputContainer}>
-              <LinearGradient
-                colors={['#7E5EA9', '#20AEBC']}
-                start={{x: 0, y: 0}}
-                end={{x: 1, y: 0}}
-                style={styles.inputGradient}>
+              <LinearGradient colors={['#7E5EA9', '#20AEBC']} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.inputGradient}>
                 <View style={styles.inputWithIcon}>
                   <TextInput
                     style={[styles.input, styles.inputWithIconField]}
@@ -370,24 +368,14 @@ const Form = ({navigation}) => {
                     onChangeText={text => handleInputChange('chassisNo', text)}
                     placeholder="Chassis Number"
                   />
-                  <TouchableOpacity
-                    onPress={handleChassisScanPress}
-                    style={styles.iconButton}>
-                    <Icon name="qr-code-scanner" size={20} color="#666" />
-                  </TouchableOpacity>
                 </View>
               </LinearGradient>
             </View>
-            
           </View>
 
           <View style={styles.row}>
             <View style={styles.inputContainer}>
-              <LinearGradient
-                colors={['#7E5EA9', '#20AEBC']}
-                start={{x: 0, y: 0}}
-                end={{x: 1, y: 0}}
-                style={styles.inputGradient}>
+              <LinearGradient colors={['#7E5EA9', '#20AEBC']} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.inputGradient}>
                 <View style={styles.inputWithIcon}>
                   <TextInput
                     style={[styles.input, styles.inputWithIconField]}
@@ -395,27 +383,16 @@ const Form = ({navigation}) => {
                     onChangeText={text => handleInputChange('engineNo', text)}
                     placeholder="Engine Number"
                   />
-                  <TouchableOpacity
-                    onPress={handleEngineScanPress}
-                    style={styles.iconButton}>
-                    <Icon name="qr-code-scanner" size={20} color="#666" />
-                  </TouchableOpacity>
                 </View>
               </LinearGradient>
             </View>
-          
-                <View style={styles.inputContainer}>
-              <LinearGradient
-                colors={['#7E5EA9', '#20AEBC']}
-                start={{x: 0, y: 0}}
-                end={{x: 1, y: 0}}
-                style={styles.inputGradient}>
+
+            <View style={styles.inputContainer}>
+              <LinearGradient colors={['#7E5EA9', '#20AEBC']} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.inputGradient}>
                 <TextInput
                   style={styles.input}
                   value={formData.YearofManufacture}
-                  onChangeText={text =>
-                    handleInputChange('Year of Manufacture', text)
-                  }
+                  onChangeText={text => handleInputChange('YearofManufacture', text)}
                   placeholder="Year of Manufacture"
                 />
               </LinearGradient>
@@ -424,38 +401,18 @@ const Form = ({navigation}) => {
 
           <View style={styles.row}>
             <View style={styles.inputContainer}>
-              <LinearGradient
-                colors={['#7E5EA9', '#20AEBC']}
-                start={{x: 0, y: 0}}
-                end={{x: 1, y: 0}}
-                style={styles.inputGradient}>
-                <TouchableOpacity 
-                  style={styles.input}
-                  onPress={() => setShowDocumentTypeDropdown(true)}
-                >
-                  <Text style={
-                    formData.documentType ? 
-                    styles.selectedModelText : 
-                    styles.placeholderText
-                  }>
+              <LinearGradient colors={['#7E5EA9', '#20AEBC']} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.inputGradient}>
+                <TouchableOpacity style={styles.input} onPress={() => setShowDocumentTypeDropdown(true)}>
+                  <Text style={formData.documentType ? styles.selectedModelText : styles.placeholderText}>
                     {formData.documentType || 'Document Type'}
                   </Text>
-                  <Icon 
-                    name="keyboard-arrow-down" 
-                    size={25} 
-                    color="#666" 
-                    style={styles.dropdownIcon}
-                  />
+                  <Icon name="keyboard-arrow-down" size={25} color="#666" style={styles.dropdownIcon}/>
                 </TouchableOpacity>
               </LinearGradient>
             </View>
 
             <View style={styles.inputContainer}>
-              <LinearGradient
-                colors={['#7E5EA9', '#20AEBC']}
-                start={{x: 0, y: 0}}
-                end={{x: 1, y: 0}}
-                style={styles.inputGradient}>
+              <LinearGradient colors={['#7E5EA9', '#20AEBC']} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.inputGradient}>
                 <TextInput
                   style={styles.input}
                   value={formData.DocumentNumber}
@@ -466,15 +423,10 @@ const Form = ({navigation}) => {
             </View>
           </View>
 
-          {/* Other Document Type Input */}
           {formData.documentType === 'Other' && (
             <View style={styles.row}>
               <View style={styles.inputContainer}>
-                <LinearGradient
-                  colors={['#7E5EA9', '#20AEBC']}
-                  start={{x: 0, y: 0}}
-                  end={{x: 1, y: 0}}
-                  style={styles.inputGradient}>
+                <LinearGradient colors={['#7E5EA9', '#20AEBC']} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.inputGradient}>
                   <TextInput
                     style={styles.input}
                     value={formData.otherDocumentType}
@@ -486,23 +438,14 @@ const Form = ({navigation}) => {
             </View>
           )}
         </View>
-        
 
         {/* Tractor Model Dropdown Modal */}
-        <Modal
-          visible={showModelDropdown}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={() => setShowModelDropdown(false)}
-        >
+        <Modal visible={showModelDropdown} transparent animationType="slide" onRequestClose={() => setShowModelDropdown(false)}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>Select Tractor Model</Text>
-                <TouchableOpacity 
-                  onPress={() => setShowModelDropdown(false)}
-                  style={styles.closeButton}
-                >
+                <TouchableOpacity onPress={() => setShowModelDropdown(false)} style={styles.closeButton}>
                   <Icon name="close" size={24} color="#000" />
                 </TouchableOpacity>
               </View>
@@ -511,27 +454,19 @@ const Form = ({navigation}) => {
                 renderItem={renderModelItem}
                 keyExtractor={(item, index) => index.toString()}
                 style={styles.modelList}
-                showsVerticalScrollIndicator={true}
+                showsVerticalScrollIndicator
               />
             </View>
           </View>
         </Modal>
 
         {/* Document Type Dropdown Modal */}
-        <Modal
-          visible={showDocumentTypeDropdown}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={() => setShowDocumentTypeDropdown(false)}
-        >
+        <Modal visible={showDocumentTypeDropdown} transparent animationType="slide" onRequestClose={() => setShowDocumentTypeDropdown(false)}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>Select Document Type</Text>
-                <TouchableOpacity 
-                  onPress={() => setShowDocumentTypeDropdown(false)}
-                  style={styles.closeButton}
-                >
+                <TouchableOpacity onPress={() => setShowDocumentTypeDropdown(false)} style={styles.closeButton}>
                   <Icon name="close" size={24} color="#000" />
                 </TouchableOpacity>
               </View>
@@ -540,43 +475,25 @@ const Form = ({navigation}) => {
                 renderItem={renderDocumentTypeItem}
                 keyExtractor={(item, index) => index.toString()}
                 style={styles.modelList}
-                showsVerticalScrollIndicator={true}
+                showsVerticalScrollIndicator
               />
             </View>
           </View>
         </Modal>
 
-        
-
-        {/* Photo and Signatures Section */}
+        {/* Photo and Signatures */}
         <View style={styles.photoSignatureSection}>
-          
-
-          <TouchableOpacity 
-            style={styles.photoSignatureBox1} 
-            onPress={() => showImagePickerOptions(setCustomerSignature)}
-          >
+          <TouchableOpacity style={styles.photoSignatureBox1} onPress={() => showImagePickerOptions(setCustomerSignature)}>
             {customerSignature ? (
-              <Image 
-                source={{ uri: customerSignature.uri }} 
-                style={styles.previewImage}
-                resizeMode="contain"
-              />
+              <Image source={{ uri: customerSignature.uri }} style={styles.previewImage} resizeMode="contain" />
             ) : (
               <Text style={styles.photoSignatureText}>Customer Signature</Text>
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={styles.photoSignatureBox1} 
-            onPress={() => showImagePickerOptions(setManagerSignature)}
-          >
+          <TouchableOpacity style={styles.photoSignatureBox1} onPress={() => showImagePickerOptions(setManagerSignature)}>
             {managerSignature ? (
-              <Image 
-                source={{ uri: managerSignature.uri }} 
-                style={styles.previewImage}
-                resizeMode="contain"
-              />
+              <Image source={{ uri: managerSignature.uri }} style={styles.previewImage} resizeMode="contain" />
             ) : (
               <Text style={styles.photoSignatureText}>Manager Signature</Text>
             )}
@@ -585,272 +502,68 @@ const Form = ({navigation}) => {
 
         {/* Buttons */}
         <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
-            <Text style={styles.submitButtonText}>Submit</Text>
+          <TouchableOpacity style={styles.submitButton} onPress={handleSubmit} disabled={submitting}>
+            {submitting ? <ActivityIndicator /> : <Text style={styles.submitButtonText}>Submit</Text>}
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.homeButton} onPress={handleHome}>
+          <TouchableOpacity style={styles.homeButton} onPress={() => navigation.navigate('Dashboard')} disabled={submitting}>
             <Text style={styles.homeButtonText}>Home</Text>
           </TouchableOpacity>
         </View>
 
-        {/* PDF Challan Button */}
-        <TouchableOpacity style={styles.pdfButton} onPress={() => navigation.navigate('Pdfpage')}>
+        <TouchableOpacity style={styles.pdfButton} onPress={() => navigation.navigate('Pdfpage')} disabled={submitting}>
           <Text style={styles.pdfButtonText}>Generate PDF</Text>
         </TouchableOpacity>
+
+       
       </ScrollView>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    paddingHorizontal: 15,
+  container:{ paddingHorizontal:15 },
+  header:{ paddingHorizontal:15, paddingVertical:10 },
+  companyName:{ fontSize:17, fontWeight:'600', color:'white', textAlign:'center',fontFamily: 'Inter_28pt-SemiBold' },
+  formNo:{ fontSize:13, marginVertical:10, fontFamily:'Inter_28pt-SemiBold', paddingHorizontal:5 },
+  Date:{ fontSize:12, textAlign:'right', marginVertical:5, fontFamily:'Inter_28pt-Regular', color:'#00000099', paddingRight:15 },
+  formContainer:{ marginBottom:15 },
+  row:{ marginBottom:0 },
+  inputContainer:{ flex:1, marginHorizontal:4, marginBottom:10 },
+  inputGradient:{ borderRadius:10, padding:1 },
+  input:{
+    borderRadius:10, backgroundColor:'#fff', padding:12, fontSize:14,
+    fontFamily:'Inter_28pt-Regular', flexDirection:'row', justifyContent:'space-between', alignItems:'center'
   },
-  header: {
-    alignItems: 'center',
-    paddingVertical: 10,
+  selectedModelText:{ fontSize:14, fontFamily:'Inter_28pt-Regular', color:'#000' },
+  placeholderText:{ fontSize:14, fontFamily:'Inter_28pt-Regular', color:'#666' },
+  dropdownIcon:{ marginLeft:8 },
+  inputWithIcon:{ flexDirection:'row', alignItems:'center' },
+  inputWithIconField:{ flex:1 },
+  modalOverlay:{ flex:1, backgroundColor:'rgba(0,0,0,0.5)', justifyContent:'center', alignItems:'center' },
+  modalContent:{ backgroundColor:'white', borderRadius:10, width:'90%', maxHeight:'70%', overflow:'hidden' },
+  modalHeader:{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', padding:15, borderBottomWidth:1, borderBottomColor:'#e0e0e0' },
+  modalTitle:{ fontSize:16, fontWeight:'bold', fontFamily:'Inter_28pt-SemiBold' },
+  closeButton:{ padding:4 },
+  modelList:{ maxHeight:300 },
+  modelItem:{ padding:15, borderBottomWidth:1, borderBottomColor:'#f0f0f0' },
+  modelItemText:{ fontSize:14, fontFamily:'Inter_28pt-Regular', color:'#333' },
+  photoSignatureSection:{},
+  photoSignatureBox1:{
+    width:'100%', height:50, borderWidth:1, borderColor:'#00000080', borderRadius:10,
+    justifyContent:'center', alignItems:'center', marginBottom:20, borderStyle:'dashed'
   },
-  companyName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: 'white',
-    textAlign: 'center',
-  },
-  formNo: {
-    fontSize: 13,
-    marginVertical: 10,
-    fontFamily: 'Inter_28pt-SemiBold',
-    paddingHorizontal: 5,
-  },
-  Date: {
-    fontSize: 12,
-    textAlign: 'right',
-    marginVertical: 5,
-    fontFamily: 'Inter_28pt-Regular',
-    color: '#00000099',
-    paddingRight: 15,
-  },
-  formContainer: {
-    marginBottom: 15,
-  },
-  row: {
-    marginBottom: 0,
-  },
-  inputContainer: {
-    flex: 1,
-    marginHorizontal: 4,
-    marginBottom: 10,
-  },
-  inputGradient: {
-    borderRadius: 10,
-    padding: 1, // gradient thickness
-  },
-  input: {
-    borderRadius: 10,
-    backgroundColor: '#fff',
-    padding: 12,
-    fontSize: 14,
-    fontFamily: 'Inter_28pt-Regular',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  selectedModelText: {
-    fontSize: 14,
-    fontFamily: 'Inter_28pt-Regular',
-    color: '#000',
-  },
-  placeholderText: {
-    fontSize: 14,
-    fontFamily: 'Inter_28pt-Regular',
-    color: '#666',
-  },
-  dropdownIcon: {
-    marginLeft: 8,
-  },
-  inputWithIcon: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  inputWithIconField: {
-    flex: 1,
-  },
-  iconButton: {
-    position: 'absolute',
-    right: 12,
-    padding: 4,
-  },
-  // Modal Styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    backgroundColor: 'white',
-    borderRadius: 10,
-    width: '90%',
-    maxHeight: '70%',
-    overflow: 'hidden',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    fontFamily: 'Inter_28pt-SemiBold',
-  },
-  closeButton: {
-    padding: 4,
-  },
-  modelList: {
-    maxHeight: 300,
-  },
-  modelItem: {
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  modelItemText: {
-    fontSize: 14,
-    fontFamily: 'Inter_28pt-Regular',
-    color: '#333',
-  },
-  radioSection: {
-    marginBottom: 15,
-  },
-  radioGroup: {
-    marginBottom: 15,
-  },
-  radioLabel: {
-    fontSize: 12,
-    fontFamily: 'Inter_28pt-Medium',
-    marginBottom: 8,
-    color: '#000',
-  },
-  radioOptionsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
-  },
-  radioOptionWrapper: {
-    flex: 1,
-    maxWidth: '90%',
-    marginHorizontal: 8,
-  },
-  radioOptionGradient: {
-    borderRadius: 6,
-    padding: 1,
-  },
-  radioOptionInner: {
-    borderRadius: 5,
-    paddingVertical: 10,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-  },
-  radioOptionInnerSelected: {
-    backgroundColor: '#7E5EA9',
-  },
-  radioOptionSelected: {
-    // Additional styles for selected state if needed
-  },
-  radioOptionText: {
-    fontSize: 12,
-    fontFamily: 'Inter_28pt-Medium',
-    color: '#000',
-  },
-  radioOptionTextSelected: {
-    color: '#fff',
-    fontWeight: '500',
-  },
-  separator: {
-    height: 1,
-    backgroundColor: '#000',
-    marginVertical: 15,
-  },
-  photoSignatureSection: {},
-  photoSignatureBox: {
-    width: '100%',
-    height: 95,
-    borderWidth: 1,
-    borderColor: '#00000080',
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-    borderStyle: 'dashed',
-  },
-   photoSignatureBox1: {
-    width: '100%',
-    height: 50,
-    borderWidth: 1,
-    borderColor: '#00000080',
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-     borderStyle: 'dashed',
-  },
-  photoSignatureText: {
-    fontSize: 13,
-    textAlign: 'center',
-    marginTop: 2,
-    color: '#00000099',
-    fontFamily: 'Inter_28pt-Medium',
-  },
-  previewImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 10,
-  },
-  buttonContainer: {
-    marginTop: 20,
-  },
-  submitButton: {
-    flex: 1,
-    backgroundColor: '#7E5EA9',
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  submitButtonText: {
-    color: '#fff',
-    fontFamily: 'Inter_28pt-SemiBold',
-    fontSize: 14,
-  },
-  homeButton: {
-    flex: 1,
-    backgroundColor: '#20AEBC',
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  homeButtonText: {
-    color: '#fff',
-     fontFamily: 'Inter_28pt-SemiBold',
-    fontSize: 14,
-  },
-  pdfButton: {
-    backgroundColor: '#7E5EA9',
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  pdfButtonText: {
-    color: '#fff',
-     fontFamily: 'Inter_28pt-SemiBold',
-    fontSize: 14,
-  },
+  photoSignatureText:{ fontSize:13, textAlign:'center', marginTop:2, color:'#00000099', fontFamily:'Inter_28pt-Medium' },
+  previewImage:{ width:'100%', height:'100%', borderRadius:10 },
+  buttonContainer:{ marginTop:20 },
+  submitButton:{ backgroundColor:'#7E5EA9', padding:15, borderRadius:10, alignItems:'center', marginBottom:10 },
+  submitButtonText:{ color:'#fff', fontFamily:'Inter_28pt-SemiBold', fontSize:14 },
+  homeButton:{ backgroundColor:'#20AEBC', padding:15, borderRadius:10, alignItems:'center', marginBottom:10 },
+  homeButtonText:{ color:'#fff', fontFamily:'Inter_28pt-SemiBold', fontSize:14 },
+  pdfButton:{ backgroundColor:'#7E5EA9', padding:15, borderRadius:10, alignItems:'center', marginBottom:20 },
+  pdfButtonText:{ color:'#fff', fontFamily:'Inter_28pt-SemiBold', fontSize:14 },
+    headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+     companyName1:{ fontSize:15, fontWeight:'500', color:'white', textAlign:'center',fontFamily: 'Inter_28pt-SemiBold' },
 });
 
 export default Form;

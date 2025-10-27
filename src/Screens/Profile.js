@@ -36,7 +36,6 @@ const ProfileScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [updateLoading, setUpdateLoading] = useState(false);
 
-  // Fetch user profile data from AsyncStorage
   useEffect(() => {
     fetchUserProfile();
   }, []);
@@ -44,29 +43,26 @@ const ProfileScreen = ({ navigation }) => {
   const fetchUserProfile = async () => {
     setLoading(true);
     try {
-      // Get user data from AsyncStorage
       const userDataString = await AsyncStorage.getItem('userData');
-      
+
       if (userDataString) {
         const parsedUserData = JSON.parse(userDataString);
-        
-        // Set user data to state
+
         setUserData({
           first_name: parsedUserData.first_name || '',
           last_name: parsedUserData.last_name || '',
           email: parsedUserData.email || '',
           phone: parsedUserData.phone || '',
-          user_id: parsedUserData.id ? parsedUserData.id.toString() : '',
+          user_id: parsedUserData.id ? parsedUserData.id.toString() : (parsedUserData.user_id ? parsedUserData.user_id.toString() : ''),
         });
-        
-        // Also set edit data for modal
+
         setEditData({
           first_name: parsedUserData.first_name || '',
           last_name: parsedUserData.last_name || '',
           email: parsedUserData.email || '',
           phone: parsedUserData.phone || '',
         });
-        
+
         console.log('User data loaded from AsyncStorage:', parsedUserData);
       } else {
         Alert.alert('Error', 'No user data found. Please login again.');
@@ -82,7 +78,7 @@ const ProfileScreen = ({ navigation }) => {
 
   const handleUpdateProfile = async () => {
     // Validation
-    if (!editData.first_name.trim() || !editData.last_name.trim() || 
+    if (!editData.first_name.trim() || !editData.last_name.trim() ||
         !editData.email.trim() || !editData.phone.trim()) {
       Alert.alert('Error', 'Please fill all fields');
       return;
@@ -96,28 +92,27 @@ const ProfileScreen = ({ navigation }) => {
     }
 
     // Phone validation (basic)
-    if (editData.phone.length < 10) {
+    if (editData.phone.replace(/\D/g, '').length < 10) {
       Alert.alert('Error', 'Please enter a valid phone number');
       return;
     }
 
     setUpdateLoading(true);
-    
+
     try {
-      // Get user ID from AsyncStorage to ensure we have the latest
-      const userId = await AsyncStorage.getItem('userId');
+      // Get user ID and current stored data
+      const storedUserId = await AsyncStorage.getItem('userId');
       const currentUserDataString = await AsyncStorage.getItem('userData');
       const currentUserData = currentUserDataString ? JSON.parse(currentUserDataString) : null;
 
-      // Create FormData as per your API requirements
+      // Prepare FormData for API
       const formData = new FormData();
       formData.append('first_name', editData.first_name.trim());
       formData.append('last_name', editData.last_name.trim());
       formData.append('email', editData.email.trim());
       formData.append('phone', editData.phone.trim());
-      formData.append('user_id', userId || userData.user_id);
+      formData.append('user_id', storedUserId || (currentUserData?.id?.toString ? currentUserData.id.toString() : currentUserData?.user_id || ''));
 
-      // Axios configuration matching your API example
       const config = {
         method: 'post',
         maxBodyLength: Infinity,
@@ -126,56 +121,74 @@ const ProfileScreen = ({ navigation }) => {
           'Content-Type': 'multipart/form-data',
         },
         data: formData,
-        timeout: 10000, // Increased timeout to 10 seconds
+        timeout: 10000,
       };
 
-      // Make API call
       const response = await axios(config);
-      
-      // Handle response
-      if (response.data.success) {
-        // Update local state with new data
-        const updatedUserData = {
-          ...userData,
-          first_name: editData.first_name,
-          last_name: editData.last_name,
-          email: editData.email,
-          phone: editData.phone,
+      console.log('Update profile response:', response?.data);
+
+      // Determine success robustly
+      const successFlag = 
+        response?.data?.success === true ||
+        response?.data?.status === 'success' ||
+        (typeof response?.data?.success === 'string' && response.data.success.toLowerCase() === 'true') ||
+        (response?.status === 200 || response?.status === 201);
+
+      if (successFlag) {
+        // Prefer server-provided user object if available
+        // Common keys used by many APIs: data, user, user_data
+        const serverUser =
+          response?.data?.data ||
+          response?.data?.user ||
+          response?.data?.user_data ||
+          null;
+
+        // Build the updated object to save to AsyncStorage
+        // Priority: serverUser fields > edited fields > existing local fields
+        const updatedStorageData = {
+          ...(currentUserData || {}),
+          ...(serverUser || {}),
+          first_name: editData.first_name.trim(),
+          last_name: editData.last_name.trim(),
+          email: editData.email.trim(),
+          phone: editData.phone.trim(),
         };
-        
-        setUserData(updatedUserData);
-        
-        // Also update AsyncStorage with the new data
-        if (currentUserData) {
-          const updatedStorageData = {
-            ...currentUserData,
-            first_name: editData.first_name,
-            last_name: editData.last_name,
-            email: editData.email,
-            phone: editData.phone,
-          };
-          await AsyncStorage.setItem('userData', JSON.stringify(updatedStorageData));
+
+        // If serverUser contains an 'id', ensure we keep it also in userId key
+        const newUserId = serverUser?.id?.toString?.() || updatedStorageData?.id?.toString?.() || storedUserId || updatedStorageData?.user_id?.toString?.();
+
+        // Save updated data to AsyncStorage
+        await AsyncStorage.setItem('userData', JSON.stringify(updatedStorageData));
+
+        // Also ensure 'userId' key is set (many parts of app expect it)
+        if (newUserId) {
+          await AsyncStorage.setItem('userId', newUserId.toString());
         }
-        
-        Alert.alert('Success', 'Profile updated successfully');
+
+        // Update local state so UI reflects changes immediately
+        setUserData({
+          first_name: updatedStorageData.first_name || '',
+          last_name: updatedStorageData.last_name || '',
+          email: updatedStorageData.email || '',
+          phone: updatedStorageData.phone || '',
+          user_id: newUserId ? newUserId.toString() : (updatedStorageData.user_id ? updatedStorageData.user_id.toString() : ''),
+        });
+
+        // Close modal and show success
+        Alert.alert('Success', response?.data?.message || 'Profile updated successfully');
         setModalVisible(false);
       } else {
-        Alert.alert('Error', response.data.message || 'Failed to update profile');
+        const message = response?.data?.message || response?.data?.error || 'Failed to update profile';
+        Alert.alert('Error', message);
       }
     } catch (error) {
       console.log('Update error:', error);
-      // Enhanced error handling
       if (error.response) {
-        // Server responded with error status
-        const errorMessage = error.response.data?.message || 
-                           error.response.data?.error || 
-                           'Update failed. Please try again.';
+        const errorMessage = error.response.data?.message || error.response.data?.error || 'Update failed. Please try again.';
         Alert.alert('Update Failed', errorMessage);
       } else if (error.request) {
-        // Request made but no response received
         Alert.alert('Network Error', 'Please check your internet connection and try again.');
       } else {
-        // Other errors
         Alert.alert('Error', 'Something went wrong. Please try again.');
       }
     } finally {
@@ -197,7 +210,7 @@ const ProfileScreen = ({ navigation }) => {
     setModalVisible(false);
   };
 
-  // Function to get user ID from AsyncStorage (can be used in other parts of the app)
+  // Utility functions (optional)
   const getUserId = async () => {
     try {
       const userId = await AsyncStorage.getItem('userId');
@@ -208,7 +221,6 @@ const ProfileScreen = ({ navigation }) => {
     }
   };
 
-  // Function to get complete user data from AsyncStorage
   const getCompleteUserData = async () => {
     try {
       const userDataString = await AsyncStorage.getItem('userData');
@@ -233,7 +245,7 @@ const ProfileScreen = ({ navigation }) => {
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <StatusBar backgroundColor="white" barStyle="dark-content" />
       
-      {/* Header with Linear Gradient */}
+      {/* Header */}
       <LinearGradient
         colors={['#7E5EA9', '#20AEBC']}
         start={{ x: 0, y: 0 }}
@@ -245,15 +257,6 @@ const ProfileScreen = ({ navigation }) => {
       <Text style={styles.subtitle}>Profile Information</Text>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* User ID Field */}
-        {/* <View style={styles.inputContainer}>
-          <Text style={styles.label}>User ID</Text>
-          <View style={styles.displayBox}>
-            <Text style={styles.displayText}>{userData.user_id}</Text>
-          </View>
-        </View> */}
-
-        {/* First Name Field */}
         <View style={styles.inputContainer}>
           <Text style={styles.label}>First Name</Text>
           <View style={styles.displayBox}>
@@ -261,7 +264,6 @@ const ProfileScreen = ({ navigation }) => {
           </View>
         </View>
 
-        {/* Last Name Field */}
         <View style={styles.inputContainer}>
           <Text style={styles.label}>Last Name</Text>
           <View style={styles.displayBox}>
@@ -269,7 +271,6 @@ const ProfileScreen = ({ navigation }) => {
           </View>
         </View>
 
-        {/* Email Field */}
         <View style={styles.inputContainer}>
           <Text style={styles.label}>Email</Text>
           <View style={styles.displayBox}>
@@ -277,7 +278,6 @@ const ProfileScreen = ({ navigation }) => {
           </View>
         </View>
 
-        {/* Phone Field */}
         <View style={styles.inputContainer}>
           <Text style={styles.label}>Phone Number</Text>
           <View style={styles.displayBox}>
@@ -285,7 +285,6 @@ const ProfileScreen = ({ navigation }) => {
           </View>
         </View>
 
-        {/* Update Button */}
         <TouchableOpacity 
           style={styles.updateButton} 
           onPress={openEditModal}
@@ -300,7 +299,6 @@ const ProfileScreen = ({ navigation }) => {
           </LinearGradient>
         </TouchableOpacity>
 
-        {/* Back to Dashboard Button */}
         <TouchableOpacity 
           style={styles.secondaryButton} 
           onPress={() => navigation.goBack()}
@@ -310,7 +308,7 @@ const ProfileScreen = ({ navigation }) => {
         </TouchableOpacity>
       </ScrollView>
 
-      {/* Edit Profile Modal */}
+      {/* Edit Modal */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -328,7 +326,6 @@ const ProfileScreen = ({ navigation }) => {
             </LinearGradient>
 
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-              {/* First Name Input */}
               <View style={styles.inputContainer}>
                 <Text style={styles.label}>First Name</Text>
                 <View style={styles.inputBox}>
@@ -343,7 +340,6 @@ const ProfileScreen = ({ navigation }) => {
                 </View>
               </View>
 
-              {/* Last Name Input */}
               <View style={styles.inputContainer}>
                 <Text style={styles.label}>Last Name</Text>
                 <View style={styles.inputBox}>
@@ -358,7 +354,6 @@ const ProfileScreen = ({ navigation }) => {
                 </View>
               </View>
 
-              {/* Email Input */}
               <View style={styles.inputContainer}>
                 <Text style={styles.label}>Email</Text>
                 <View style={styles.inputBox}>
@@ -376,7 +371,6 @@ const ProfileScreen = ({ navigation }) => {
                 </View>
               </View>
 
-              {/* Phone Input */}
               <View style={styles.inputContainer}>
                 <Text style={styles.label}>Phone Number</Text>
                 <View style={styles.inputBox}>
@@ -393,7 +387,6 @@ const ProfileScreen = ({ navigation }) => {
                 </View>
               </View>
 
-              {/* Modal Buttons */}
               <View style={styles.modalButtons}>
                 <TouchableOpacity 
                   style={[styles.modalButton, styles.cancelButton]} 

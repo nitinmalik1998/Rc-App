@@ -29,6 +29,10 @@ import FinanceModelList from '../Screens/StockManagement/FinanceModelList';
 import Signup from '../Screens/Signup';
 import Forgetpassword from '../Screens/Forgetpassword';
 import Profile from '../Screens/Profile';
+import GetAllModel from '../Screens/StockManagement/GetAllModel';
+import AllDelivery from '../Screens/StockManagement/AllDelivery';
+import AddModelStocks from '../Screens/StockManagement/AddModelStocks';
+import AllLocation from '../Screens/StockManagement/AllLocation';
 
 
 
@@ -189,6 +193,26 @@ function RootNavigation() {
          <Stack.Screen
           name="Profile"
           component={Profile}
+          options={{headerShown: false}}
+        />
+         <Stack.Screen
+          name="GetAllModel"
+          component={GetAllModel}
+          options={{headerShown: false}}
+        />
+         <Stack.Screen
+          name="AllDelivery"
+          component={AllDelivery}
+          options={{headerShown: false}}
+        />
+         <Stack.Screen
+          name="AddModelStocks"
+          component={AddModelStocks}
+          options={{headerShown: false}}
+        />
+        <Stack.Screen
+          name="AllLocation"
+          component={AllLocation}
           options={{headerShown: false}}
         />
       </Stack.Navigator>
